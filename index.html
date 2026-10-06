@@ -477,7 +477,7 @@
       <h2>老師署名</h2>
       <input type="text" id="settingSign" style="width:100%;">
     </div>
-    <button class="btn btn-primary" onclick="saveSettings()">儲存設定</button>
+    <div id="settingsSaveStatus" style="font-size:13px;color:var(--ink-soft);">這一頁的修改會自動儲存</div>
   </section>
 
   <!-- ===================== 預覽 / 輸出 ===================== -->
@@ -745,6 +745,8 @@ function installWriteTracking(){
     proto[fn] = function(){ return trackWrite(orig.apply(this, arguments)); };
   });
   window.addEventListener('beforeunload', e => {
+    // 共用文字設定還在 0.8 秒等待期的修改，先送出再判斷
+    if(typeof hasUnsavedSettings === 'function' && hasUnsavedSettings()) flushSettingsSave();
     if(pendingWrites > 0 || !isOnline && dataListenersStarted){
       e.preventDefault();
       e.returnValue = "還有資料沒有上傳到雲端，離開會遺失，確定要離開嗎？";
@@ -814,15 +816,18 @@ function startDataListeners(){
       // 否則之前存過設定、但沒有這次新增欄位(例如rewardDate)的舊資料，
       // 會讓新欄位整個變成undefined，畫面看起來像「文字不見了」。
       settingsCache = Object.assign({}, settingsCache, v);
-      document.getElementById('settingGreeting').value = settingsCache.greeting || "";
-      document.getElementById('settingRewardTitle').value = settingsCache.rewardTitle || "";
-      document.getElementById('settingRewardPoints').value = (settingsCache.rewardPoints != null ? settingsCache.rewardPoints : 50);
-      document.getElementById('settingRewardDate').value = settingsCache.rewardDate || "";
+      // 自動儲存後雲端會回傳一次新值；正在輸入的欄位不要被蓋掉，否則游標會跳、後面打的字會不見
+      const setIfIdle = (id, val) => { const el = document.getElementById(id); if(el !== document.activeElement) el.value = val; };
+      setIfIdle('settingGreeting', settingsCache.greeting || "");
+      setIfIdle('settingRewardTitle', settingsCache.rewardTitle || "");
+      setIfIdle('settingRewardPoints', (settingsCache.rewardPoints != null ? settingsCache.rewardPoints : 50));
+      setIfIdle('settingRewardDate', settingsCache.rewardDate || "");
       // rewardUnit允許留空(只顯示數字)，所以不能用 || 預設值蓋掉，要判斷是不是undefined
-      document.getElementById('settingRewardUnit').value = (settingsCache.rewardUnit != null ? settingsCache.rewardUnit : "點");
-      document.getElementById('settingParentTitle').value = settingsCache.parentTitle || "";
-      document.getElementById('settingSign').value = settingsCache.sign || "";
+      setIfIdle('settingRewardUnit', (settingsCache.rewardUnit != null ? settingsCache.rewardUnit : "點"));
+      setIfIdle('settingParentTitle', settingsCache.parentTitle || "");
+      setIfIdle('settingSign', settingsCache.sign || "");
       renderParentMsgSettings();
+      renderRewardFields();
     }
   }, err => {
     console.error("Firebase 讀取失敗(settings)", err);
@@ -1290,10 +1295,19 @@ function renderParentMsgSettings(){
   const msgs = settingsCache.parentMessages || {};
   const nos = Object.keys(msgs).map(Number).sort((a,b)=>a-b);
   let html = '';
+  // 正在輸入某一則時，雲端回傳不要整個重畫(會把游標跟還沒存的字弄掉)，只更新其他則的內容
+  const focused = document.activeElement;
+  if(focused && list.contains(focused)){
+    const shown = [...list.querySelectorAll('textarea[data-no]')].map(t=>Number(t.dataset.no));
+    if(shown.join(',') === nos.join(',')){
+      list.querySelectorAll('textarea[data-no]').forEach(t=>{ if(t !== focused) t.value = msgs[t.dataset.no] || ''; });
+      return;
+    }
+  }
   nos.forEach(i=>{
     html += `<div style="margin-bottom:10px;display:flex;gap:8px;align-items:flex-start;">
       <label class="field" style="flex:1;">第 ${i} 則
-        <textarea style="min-height:56px;" onchange="updateParentMsg(${i},this.value)">${escapeHtml(msgs[i]||'')}</textarea>
+        <textarea style="min-height:56px;" data-no="${i}" oninput="updateParentMsg(${i},this.value)" onchange="flushSettingsSave()">${escapeHtml(msgs[i]||'')}</textarea>
       </label>
       <button class="btn btn-secondary" onclick="deleteParentMsg(${i})" style="flex:0 0 auto;margin-top:20px;">刪除</button>
     </div>`;
@@ -1306,31 +1320,74 @@ function addParentMsg(){
   const nextNo = nos.length ? Math.max(...nos) + 1 : 1;
   settingsCache.parentMessages[nextNo] = '';
   renderParentMsgSettings();
+  saveSettingsFields({parentMessages: settingsCache.parentMessages});
 }
 function deleteParentMsg(no){
   if(!confirm(`確定要刪除第 ${no} 則嗎？如果有學生目前選用這一則，報告上那段文字會變成空白，需要再幫那些學生重新選一則。`)) return;
   if(settingsCache.parentMessages) delete settingsCache.parentMessages[no];
   renderParentMsgSettings();
+  saveSettingsFields({parentMessages: settingsCache.parentMessages});
 }
 function updateParentMsg(no, value){
   settingsCache.parentMessages = settingsCache.parentMessages || {};
   settingsCache.parentMessages[no] = value;
+  // 給家長的話整包一起存：如果雲端還沒存過，只存單一則會把其他預設則數蓋掉
+  scheduleSettingsSave('parentMessages', () => settingsCache.parentMessages);
 }
-function saveSettings(){
+
+/* 共用文字設定：自動儲存
+   停止打字 0.8 秒、或離開欄位時就存；每個欄位分開 update，兩台裝置改不同欄位不會互蓋 */
+const SETTING_FIELDS = {
+  settingGreeting:    {key:'greeting'},
+  settingRewardTitle: {key:'rewardTitle'},
+  settingRewardPoints:{key:'rewardPoints', parse: v => parseInt(v, 10) || 0},
+  settingRewardDate:  {key:'rewardDate'},
+  settingRewardUnit:  {key:'rewardUnit'},
+  settingParentTitle: {key:'parentTitle'},
+  settingSign:        {key:'sign'},
+};
+const settingsSaveTimers = {};   // key -> {timer, getValue}
+function hasUnsavedSettings(){ return Object.keys(settingsSaveTimers).length > 0; }
+function setSettingsSaveStatus(text){
+  const el = document.getElementById('settingsSaveStatus');
+  if(el) el.textContent = text;
+}
+function saveSettingsFields(fields){
   if(!requireDb()) return;
-  const data = {
-    greeting: document.getElementById('settingGreeting').value,
-    rewardTitle: document.getElementById('settingRewardTitle').value,
-    rewardPoints: parseInt(document.getElementById('settingRewardPoints').value, 10) || 0,
-    rewardDate: document.getElementById('settingRewardDate').value,
-    rewardUnit: document.getElementById('settingRewardUnit').value,
-    parentTitle: document.getElementById('settingParentTitle').value,
-    parentMessages: settingsCache.parentMessages || {},
-    sign: document.getElementById('settingSign').value,
-  };
-  db.ref(DB_ROOT + "/settings/global").set(data);
-  alert("已儲存");
+  setSettingsSaveStatus("儲存中…");
+  db.ref(DB_ROOT + "/settings/global").update(fields).then(()=>{
+    if(!hasUnsavedSettings()){
+      const t = new Date();
+      setSettingsSaveStatus(`✓ 已自動儲存（${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}）`);
+    }
+  }, ()=> setSettingsSaveStatus("⚠ 儲存失敗，請檢查網路後再修改一次"));
 }
+function scheduleSettingsSave(key, getValue){
+  if(settingsSaveTimers[key]) clearTimeout(settingsSaveTimers[key].timer);
+  setSettingsSaveStatus("有修改，準備儲存…");
+  settingsSaveTimers[key] = {getValue, timer: setTimeout(()=> flushSettingsSave(key), 800)};
+}
+function flushSettingsSave(onlyKey){
+  const keys = onlyKey ? [onlyKey] : Object.keys(settingsSaveTimers);
+  const fields = {};
+  keys.forEach(k=>{
+    const s = settingsSaveTimers[k];
+    if(!s) return;
+    clearTimeout(s.timer);
+    delete settingsSaveTimers[k];
+    fields[k] = s.getValue();
+  });
+  if(Object.keys(fields).length) saveSettingsFields(fields);
+}
+Object.entries(SETTING_FIELDS).forEach(([id, f])=>{
+  const el = document.getElementById(id);
+  const getValue = () => f.parse ? f.parse(el.value) : el.value;
+  el.addEventListener('input', ()=>{
+    settingsCache[f.key] = getValue();
+    scheduleSettingsSave(f.key, getValue);
+  });
+  el.addEventListener('change', ()=> flushSettingsSave(f.key));
+});
 
 /* ---------------- 報告渲染 ---------------- */
 const SUBJ_CLASS = {"數學":"math","國語":"chinese","英文":"english"};
