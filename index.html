@@ -318,6 +318,14 @@
   header .user-area button:hover{ border-color:#fff; }
   @media print{ #loginOverlay, header .user-area{ display:none !important; } }
 </style>
+<style>
+  /* 斷線／尚未上傳警告 */
+  #offlineBanner{ display:none; position:sticky; top:0; z-index:9000; background:#c0392b; color:#fff;
+    padding:10px 16px; font-size:14px; font-weight:700; text-align:center; line-height:1.5; }
+  #offlineBanner.show{ display:block; }
+  #offlineBanner.pending{ background:#d68910; }
+  @media print{ #offlineBanner{ display:none !important; } }
+</style>
 <style id="pageSizeStyle">@page{ size:A3 landscape; margin:0; }</style>
 </head>
 <body>
@@ -338,6 +346,7 @@
   </form>
 </div>
 
+<div id="offlineBanner"></div>
 <header>
   <h1>KUMON 學習報告系統</h1>
   <div class="user-area">
@@ -632,6 +641,8 @@ function initFirebase(){
   }
   firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.database();
+  installWriteTracking();
+  watchConnection();
 
   // 先確認登入狀態，登入後才開始讀取資料
   firebase.auth().onAuthStateChanged(user => {
@@ -693,6 +704,68 @@ function doLogout(){
   firebase.auth().signOut().then(() => location.reload());
 }
 
+/* ---------------- 斷線偵測＋未上傳筆數 ----------------
+   Firebase 斷線時，寫入只會暫存在這個網頁裡，畫面看起來像已存檔；
+   這時重新整理或關掉網頁，暫存的修改就會消失。所以：
+   1. 監看 .info/connected，斷線就顯示紅色警告
+   2. 計算「已送出、但伺服器還沒確認」的筆數，有未上傳的就提醒
+   3. 有未上傳資料時，重新整理／關閉網頁會跳出確認 */
+let isOnline = false;
+let pendingWrites = 0;
+function refreshSyncBanner(){
+  const b = document.getElementById('offlineBanner');
+  if(!isOnline){
+    b.className = "show";
+    b.textContent = "⚠ 網路已中斷！" + (pendingWrites ? `有 ${pendingWrites} 筆修改尚未上傳，` : "") +
+      "現在輸入的資料還沒存到雲端，請不要重新整理或關閉網頁，等網路恢復後會自動上傳。";
+  }else if(pendingWrites > 0){
+    b.className = "show pending";
+    b.textContent = `上傳中…（${pendingWrites} 筆）請稍候再關閉網頁`;
+  }else{
+    b.className = "";
+    b.textContent = "";
+  }
+}
+function trackWrite(promise){
+  pendingWrites++;
+  refreshSyncBanner();
+  promise.then(() => {}, err => {
+    console.error("Firebase 寫入失敗", err);
+    alert("⚠ 有一筆資料儲存失敗：" + err.message + "。請重新整理後確認資料，必要時重新輸入。");
+  }).finally(() => {
+    pendingWrites--;
+    refreshSyncBanner();
+  });
+  return promise;
+}
+function installWriteTracking(){
+  const proto = firebase.database.Reference.prototype;
+  ["set", "update", "remove"].forEach(fn => {
+    const orig = proto[fn];
+    proto[fn] = function(){ return trackWrite(orig.apply(this, arguments)); };
+  });
+  window.addEventListener('beforeunload', e => {
+    if(pendingWrites > 0 || !isOnline && dataListenersStarted){
+      e.preventDefault();
+      e.returnValue = "還有資料沒有上傳到雲端，離開會遺失，確定要離開嗎？";
+      return e.returnValue;
+    }
+  });
+}
+function watchConnection(){
+  let firstCheck = true;
+  db.ref(".info/connected").on("value", snap => {
+    isOnline = snap.val() === true;
+    // 剛開網頁時連線需要一點時間，第一次的 false 不算斷線
+    if(firstCheck && !isOnline){ firstCheck = false; setTimeout(refreshSyncBanner, 5000); return; }
+    firstCheck = false;
+    refreshSyncBanner();
+    if(dataListenersStarted){
+      document.getElementById('connStatus').textContent = isOnline ? "已連線" : "⚠ 已斷線";
+    }
+  });
+}
+
 let dataListenersStarted = false;
 function startDataListeners(){
   if(dataListenersStarted) return;
@@ -709,7 +782,7 @@ function startDataListeners(){
     studentsCache = snap.val() || {};
     renderStudentTable();
     renderStudentSelects();
-    document.getElementById('connStatus').textContent = "已連線";
+    document.getElementById('connStatus').textContent = isOnline ? "已連線" : "⚠ 已斷線";
   }, err => {
     document.getElementById('connStatus').textContent = (err.code === "PERMISSION_DENIED" || /permission/i.test(err.message))
       ? "這個帳號沒有讀取權限，請聯絡管理者" : "連線失敗：" + err.message;
