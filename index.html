@@ -1,0 +1,1973 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KUMON 學習報告系統</title>
+
+<!-- ============================================================
+     Firebase 設定：請把下面 FIREBASE_CONFIG 換成你的專案設定值
+     （可以沿用「補習班進銷存」同一個 Firebase 專案，把物件內容整個貼過來即可）
+     ============================================================ -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<!-- SheetJS:在瀏覽器端直接產生 .xlsx（全班學習總表用），不需要後端 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- JSZip:xlsx其實就是zip。SheetJS社群版寫不出「資料驗證(下拉選單)」，
+     所以產生檔案後再用JSZip把下拉選單的XML塞進工作表裡 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+  :root{
+    --paper:#F7F6F3; --ink:#23282B; --ink-soft:#6b7280;
+    --accent:#C0562E; --accent-bg:#FDF1EA;
+    --math:#3E5C76; --chinese:#B85C38; --english:#2F7A6F;
+    --line:#E4E1DA; --card:#FFFFFF;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    background:var(--ink); color:#fff; padding:14px 20px;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  header h1{ font-size:18px; margin:0; font-weight:700; }
+  header .status{ font-size:12px; color:#ccc; }
+
+  nav.tabs{
+    display:flex; gap:4px; padding:10px 20px 0; background:var(--paper);
+    border-bottom:1px solid var(--line); flex-wrap:wrap;
+  }
+  nav.tabs button{
+    border:1px solid var(--line); border-bottom:none; background:#fff;
+    padding:9px 18px; border-radius:8px 8px 0 0; font-size:14px; cursor:pointer;
+    color:var(--ink-soft); font-family:inherit;
+  }
+  nav.tabs button.active{ background:var(--paper); color:var(--accent); font-weight:700; border-color:var(--accent); }
+
+  main{ padding:20px; max-width:1100px; margin:0 auto; }
+  .panel{ display:none; }
+  .panel.active{ display:block; }
+
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .card h2{ font-size:16px; margin:0 0 12px; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  .student-name-link{ color:var(--ink); text-decoration:none; font-weight:700; cursor:pointer; }
+  .student-name-link:hover{ color:var(--accent); text-decoration:underline; }
+  th,td{ text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th{ color:var(--ink-soft); font-weight:700; font-size:12.5px; }
+  tr:hover td{ background:#FAFAF8; }
+
+  input[type=text], input[type=date], textarea, select{
+    font-family:inherit; font-size:13.5px; padding:7px 10px;
+    border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink);
+  }
+  textarea{ width:100%; resize:vertical; }
+  label.field{ display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--ink-soft); }
+
+  .btn{
+    border:none; border-radius:7px; padding:8px 16px; font-size:13.5px; cursor:pointer;
+    font-family:inherit; font-weight:700;
+  }
+  .btn-primary{ background:var(--accent); color:#fff; }
+  .btn-secondary{ background:#eee; color:var(--ink); }
+  .btn-danger{ background:#fff; color:#c0392b; border:1px solid #f0c4c0; }
+  .btn-small{ padding:4px 10px; font-size:12px; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
+  .row > *{ flex:1 1 160px; }
+
+  .subject-tag{ display:inline-block; font-size:12px; font-weight:700; color:#fff; border-radius:4px; padding:2px 8px; }
+  .subject-tag.math{ background:var(--math); }
+  .subject-tag.chinese{ background:var(--chinese); }
+  .subject-tag.english{ background:var(--english); }
+
+  /* ---------------- 可搜尋的學生選擇框(combo) ---------------- */
+  .combo{ position:relative; }
+  .combo-dropdown{
+    display:none; position:absolute; z-index:20; top:100%; left:0; right:0; margin-top:4px;
+    max-height:220px; overflow-y:auto; background:#fff; border:1px solid var(--line);
+    border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.1);
+  }
+  .combo-item{ padding:8px 10px; font-size:13.5px; cursor:pointer; }
+  .combo-item:hover, .combo-item.active{ background:var(--accent-bg); }
+  .combo-empty{ padding:10px; font-size:12.5px; color:var(--ink-soft); }
+  table.progress-grid{ width:100%; border-collapse:collapse; }
+  table.progress-grid th, table.progress-grid td{ border:1px solid var(--line); padding:8px; vertical-align:top; }
+  table.progress-grid thead th{ background:#FAFAF8; font-size:13px; text-align:center; }
+  table.progress-grid .grid-corner{ width:88px; font-size:12px; color:var(--ink-soft); }
+  table.progress-grid .grid-subj{ width:64px; font-weight:700; background:#FAFAF8; text-align:center; }
+  table.progress-grid .grid-tag{ font-size:11px; font-weight:400; color:#fff; background:var(--accent); border-radius:20px; padding:1px 8px; display:inline-block; margin-top:4px; }
+  table.progress-grid td input[type=text]{ width:100%; text-align:center; }
+  table.progress-grid .grid-preview{ font-size:11.5px; color:var(--ink-soft); margin-top:4px; min-height:14px; text-align:center; line-height:1.4; }
+  table.progress-grid .grid-preview.warn{ color:#c0392b; font-weight:700; }
+
+  /* ---------------- 報告樣板（跟最終定案 PDF 一致） ---------------- */
+  /* .report-page 是固定 210mm×297mm、overflow:hidden 的「一頁紙」容器；
+     .report 是實際內容，寬度對齊但高度不設限，太高時由JS整體等比縮小(transform:scale)塞進 .report-page，
+     這樣「頁面高度」永遠固定是一頁，瀏覽器的分頁機制不會被內容多寡影響，也不會再發生跨頁時版面錯位的問題。 */
+  .report-page{
+    width:210mm; height:297mm; margin:0 auto 16px; background:#fff;
+    box-shadow:0 0 0 1px var(--line); overflow:hidden; position:relative;
+  }
+  /* 3科的學生改用A3橫式(420mm×297mm，高度跟A4一樣，只是變寬)，內容分兩欄放 */
+  .report-page.a3{ width:420mm; }
+  #printArea{ overflow-x:auto; }
+  .report{
+    position:absolute; top:0; left:0; width:210mm; min-height:297mm; background:#fff; padding:14mm 15mm;
+    font-size:20.4px; line-height:1.85; color:#222;
+    transform-origin:top left;
+  }
+  .report.a3{ width:420mm; padding:5.5mm 12.5mm; line-height:1.4; }
+  /* A3橫式:水平時間軸。用flexbox(不是CSS Grid)實作，節點列(日期+圓點+主線)排在最「上方」，
+     教材範圍全部排在時間軸下方同一列，一個期別一欄、跟上方節點列一樣平分成n等份；
+     時間軸主線用::before畫出來。上下兩列的欄位邊界完全對齊，所以框正上方就是它自己的日期。
+     2026-09-14:字級/間距沿用使用者用「A3排版調整工具」試出來、確認滿意的數值。 */
+  .report .h-timeline{ margin:10px 0 24px; }
+  /* 2026-09-14:每個期別各自佔一個等寬欄位(跟下方節點列同樣是n等份)，框的中心線＝節點的中心線，
+     教材範圍正上方就是它自己的日期，不會再出現「框跨在兩個日期中間」的錯開感。
+     注意:所有h-slot的左右padding必須完全對稱(不能再對第一個/最後一個做例外)，
+     否則框的中心會偏移幾個px，跟節點對不準——這正是先前看起來不整齊的原因之一。 */
+  .report .h-timeline .h-row{ display:flex; width:100%; align-items:stretch; }
+  .report .h-timeline .h-slot{ flex:1 1 0; min-width:0; box-sizing:border-box; padding:0 6px; display:flex; }
+  /* 同一排的框拉成等高(flex stretch)，底邊切齊，視覺上比各自高矮不一整齊很多 */
+  .report .h-timeline .h-box{ flex:1 1 auto; position:relative; background:none; border:2px dashed #999; border-radius:6px; padding:13px; box-sizing:border-box; page-break-inside:avoid; }
+  .report .h-timeline .h-box.h-above{ margin-bottom:21px; }
+  .report .h-timeline .h-box.h-below{ margin-top:21px; }
+  /* 框跟它對應的節點之間補一段連接線(垂直短線)，left位置用--stem-left決定接左邊還右邊的節點 */
+  .report .h-timeline .h-box::after{ content:""; position:absolute; left:var(--stem-left, 50%); width:5px; background:var(--accent); transform:translateX(-50%); }
+  .report .h-timeline .h-box.h-above::after{ bottom:-21px; height:21px; }
+  .report .h-timeline .h-box.h-below::after{ top:-21px; height:21px; }
+  .report .h-timeline .h-node-row{ display:flex; width:100%; position:relative; align-items:center; }
+  .report .h-timeline .h-node-row::before{ content:""; position:absolute; left:0; right:0; top:50%; height:5px; background:var(--accent); transform:translateY(-50%); }
+  .report .h-timeline .h-node{ flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; position:relative; z-index:1; }
+  .report .h-timeline .h-node-chip{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; background:#fff; padding:2px 10px; }
+  .report .h-timeline .h-dot{ flex:0 0 auto; width:19px; height:19px; border-radius:50%; background:var(--accent); border:3px solid #fff; box-shadow:0 0 0 2px var(--accent); z-index:1; }
+  .report .h-timeline .h-date .d{ font-weight:700; font-size:17px; color:var(--accent); }
+  .report .h-timeline .h-date .tag{ display:inline-block; font-size:10.5px; font-weight:400; color:#fff; background:var(--accent); border-radius:20px; padding:1px 8px; margin-left:4px; }
+  .report.a3 .h-timeline .p-subject, .report.a3 .h-timeline .p-code, .report.a3 .h-timeline .p-name{ font-size:19px; }
+  .report.a3 .h-timeline .p-desc{ font-size:17px; }
+  /* A3橫式:目標達成獎勵、給家長的話兩個框併排，左右外緣要跟上方教材範圍框對齊(不是置中留白)。
+     2026-09-14:原本兩框各佔46%置中，左右各多留約4%的空白，跟上面的框對不齊；
+     改成各佔一半(flex:1 1 0)撐滿整列，並補上跟.h-slot相同的左右padding:0 6px，
+     中間gap設12px＝上方兩個框之間的間距(6px+6px)，讓垂直邊界完全切齊 */
+  .report.a3 .bottom-row{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:0 6px; box-sizing:border-box; }
+  /* 2026-09-14:時間軸移到上方後，下面兩個框整體往上靠近一點(原本時間軸下緣24px＋框自己16px＝40px，
+     現在縮成8px＋4px＝12px)，讓「目標達成獎勵/給家長的話」貼著教材範圍，不要浮在下半頁 */
+  .report.a3 .h-timeline{ margin-bottom:8px; }
+  /* 兩個框各佔「一半減掉中間間隔的一半」。
+     ※不能用 flex:1 1 0 ——搭配 box-sizing:border-box 時，flex-basis:0 的基準值會被撐成
+       「padding+border」的大小(獎勵框有17px左右padding+1px框線，右邊的.bottom-block本身沒有padding)，
+       兩者基準不同，剩餘空間再各分一半，結果獎勵框永遠比右邊寬約36px，中間分界會偏右、跟上方的框縫對不齊。
+       改成直接指定寬度就不受padding影響，左右兩半完全等寬。 */
+  .report.a3 .bottom-row .reward-box, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
+  /* A3橫式:目標達成獎勵、給家長的話兩個框頂端對齊——.parent-note自己還有一層margin-top，
+     疊加.bottom-block的margin-top後會比reward-box多下移一截，這裡歸零讓兩個框視覺頂端切齊 */
+  .report.a3 .bottom-block .parent-note{ margin-top:0; }
+  .report.a3 .reward-box{ font-size:16px; padding:11px 17px; }
+  .report.a3 .parent-note{ padding:11px 17px; }
+  .report.a3 .parent-note-title{ font-size:16px; }
+  .report.a3 .parent-note-body, .report.a3 .parent-note-sign{ font-size:17px; }
+  /* 依使用者確認滿意的參考版本:內容就是由上到下正常排列，若有多餘空間就留在整份報告最後面，
+     不再用flex把「給家長的話」硬推到頁面最下方(那樣容易在時間軸和獎勵框中間留下不自然的大段空白)。 */
+  .report .bottom-block{ margin-top:18px; }
+  .report h1.title{ text-align:center; font-size:34.8px; font-weight:700; margin:0 0 12px; }
+  .report .greeting{ margin:0 0 24px; padding-bottom:16px; border-bottom:1px solid #222; font-size:19.8px; line-height:1.85; text-align:center; }
+  .report .greeting p{ margin:4px 0; }
+  .report .greeting p.salutation{ text-align:left; }
+  .report .timeline-wrap{ position:relative; padding-left:170px; margin:0 0 4px; }
+  .report .period-block{ position:relative; margin-bottom:13px; page-break-inside:avoid; }
+  .report .period-block::before{
+    content:""; position:absolute; left:-34px; top:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--accent); border:3px solid #fff; box-shadow:0 0 0 2px var(--accent); z-index:1;
+    transform:translateX(-50%);
+  }
+  /* 連接線改成每個期別區塊各自畫一段(接到下一個區塊的圓點),而不是用單一長線貫穿整個時間軸；
+     單一長線在內容跨頁列印時,線的絕對定位無法正確跨頁延伸，會造成版面錯位。
+     圓點和連接線的水平位置都用同一個left值+transform:translateX(-50%)置中，
+     這樣不管兩者寬度不同、瀏覽器四捨五入方式不同，一定會精準對齊在同一條垂直線上。 */
+  .report .period-block:not(:last-child)::after{
+    content:""; position:absolute; left:-34px; top:17px; bottom:-10px; width:3px; background:#ddd; z-index:0;
+    transform:translateX(-50%);
+  }
+  .report .period-date{ position:absolute; left:-170px; width:118px; top:0; padding-right:14px; text-align:right; display:flex; flex-direction:column; align-items:flex-end; }
+  .report .period-date .d{ font-weight:700; font-size:20.4px; color:var(--accent); white-space:nowrap; }
+  .report .period-date .tag{ font-size:11.5px; font-weight:400; color:#fff; background:var(--accent); border-radius:20px; padding:2px 9px; margin-top:5px; }
+  .report .p-row{ margin-bottom:9px; }
+  .report .p-row-head{ display:flex; align-items:baseline; flex-wrap:wrap; gap:7px; }
+  .report .p-subject{ font-weight:700; font-size:18.6px; color:#fff; border-radius:4px; padding:2px 9px; margin-right:7px; }
+  .report .p-subject.math{ background:var(--math); }
+  .report .p-subject.chinese{ background:var(--chinese); }
+  .report .p-subject.english{ background:var(--english); }
+  .report .p-code, .report .p-name{ font-weight:700; font-size:18.6px; }
+  .report .p-sep{ color:#bbb; }
+  .report .p-desc{ font-size:17.4px; color:#222; margin-top:5px; margin-left:60px; }
+  /* 右邊界原本也設成-170px，是抄左邊界(用來抵銷.timeline-wrap的padding-left:170px)時的疏漏——
+     右側並沒有對應的padding需要抵銷，設成-170px會讓虛線多往右延伸約45mm，超出A4版面右側。 */
+  .report .stage-divider{ border-top:1.5px dashed #bbb; margin:4px 0 16px -170px; }
+  .report .reward-box{ background:var(--accent-bg); border:1px solid #E8D9B0; border-radius:6px; padding:14px 20px; margin:16px 0 14px; font-size:18.6px; white-space:pre-line; page-break-inside:avoid; }
+  .report .reward-box .label{ font-weight:700; color:#B8860B; margin-bottom:6px; }
+  .report .parent-note{ border:2px dashed #666; border-radius:2px; padding:16px 22px; margin:14px 0 9px; text-align:center; page-break-inside:avoid; }
+  .report .parent-note-title{ font-size:19px; font-weight:700; margin-bottom:11px; letter-spacing:.04em; }
+  .report .parent-note-body{ font-size:18.6px; white-space:pre-line; }
+  .report .parent-note-sign{ text-align:right; font-size:18.6px; margin:8px 0 2px; }
+  .report footer{ text-align:center; color:#999; font-size:11px; margin-top:8px; border-top:1px solid #eee; padding-top:6px; }
+
+  /* ---------------- 黑白列印模式:原本靠顏色區分數學/國語/英文，改成統一深灰／黑色，
+     辨識完全靠文字標籤本身(反正每個色塊上都已經寫了科目名稱，黑白列印不影響閱讀) ---------------- */
+  /* 一般內文用的#222是深灰、不是純黑，彩色列印或螢幕上看不太出來，但轉黑白/灰階列印時
+     深灰常常印不實、看起來偏淺——黑白模式下把所有文字統一強制改成純黑#000，確保列印夠深。 */
+  .report.bw-mode{ color:#000; }
+  .report.bw-mode .p-subject{ background:#333 !important; }
+  .report.bw-mode .period-date .d{ color:#000; }
+  .report.bw-mode .period-date .tag{ background:#333; }
+  .report.bw-mode .period-block::before{ background:#000; border-color:#fff; box-shadow:0 0 0 2px #000; }
+  .report.bw-mode .period-block:not(:last-child)::after{ background:#999; }
+  .report.bw-mode .reward-box{ background:#f2f2f2; border-color:#999; }
+  .report.bw-mode .reward-box .label{ color:#000; }
+  .report.bw-mode .grid-tag{ background:#333; }
+  .report.bw-mode .h-timeline .h-dot{ background:#000; border-color:#fff; box-shadow:0 0 0 2px #000; }
+  .report.bw-mode .h-timeline .h-node-row::before{ background:#000; }
+  .report.bw-mode .h-timeline .h-box::after{ background:#000; }
+  .report.bw-mode .h-timeline .h-date .d{ color:#000; }
+  .report.bw-mode .h-timeline .h-date .tag{ background:#333; }
+
+  .toolbar{ display:flex; gap:10px; margin-bottom:14px; align-items:center; flex-wrap:wrap; }
+
+  @media print{
+    /* 瀏覽器預設列印/另存PDF時，不會印出background-color之類的「背景圖形」
+       (除非使用者自己在列印對話框「更多設定」裡勾選「背景圖形」)。
+       這份報告的科目色塊、時間軸圓點與連接線、獎勵框底色都是靠background-color畫出來的，
+       沒印出背景圖形的話，這些顏色會整個消失，變成只剩黑白文字框線——這就是先前
+       「輸出PDF和螢幕上看到的完全不一樣、顏色都不見了」的真正原因。
+       加上print-color-adjust:exact，強制瀏覽器一定要印出這些顏色，
+       使用者就不需要自己記得去勾選列印設定。 */
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
+    body *{ visibility:hidden; }
+    #printArea, #printArea *{ visibility:visible; }
+    #printArea{ position:absolute; left:0; top:0; width:auto; }
+    .report-page{ box-shadow:none; margin:0; page-break-after:always; }
+    .report-page:last-child{ page-break-after:auto; }
+    /* 原本這裡另外設定 @page{margin:12mm 13mm}，跟 .report 自己的 padding:12mm 13mm 疊加，
+       等於實際版面比A4紙還大了一圈，瀏覽器/PDF引擎為了印得下會自動整頁縮放，
+       導致「預覽看到的排版」跟「實際輸出的PDF」對不起來。改成 margin:0，
+       版面邊界完全交給 .report 自己的 padding 控制。
+       紙張尺寸(A4/A3)不寫死在這裡——瀏覽器對「同一次列印裡用具名@page切換不同紙張尺寸」
+       的支援並不可靠(實測會整批都印成A4，3科學生A3的部分被硬裁切掉右半邊)。
+       改成用下面的 #pageSizeStyle 這個獨立<style>，由JS在每次列印前依這次要印的
+       學生是A4還是A3動態改寫內容，確保「這次列印」全部都是同一種紙張尺寸。 */
+  }
+/* === A3-LAYOUT START（由「A3時間軸排版設定」工具產生，整段可直接取代） === */
+  /* 產生日期：2026-09-14　※全部限定在 .report.a3 底下，A4直式版面不受影響 */
+  .report.a3{ padding:9mm 16mm; line-height:1.65; }
+  .report.a3 h1.title{ font-size:35px; margin:0 0 8px; }
+  .report.a3 .greeting{ font-size:19.8px; line-height:1.85; padding-bottom:16px; margin:0 0 24px; }
+
+  .report.a3 .h-timeline{ margin:10px 0 10px; }
+  .report.a3 .h-timeline .h-slot{ padding:0 6px; }
+  .report.a3 .h-timeline .h-box{ border-width:2px; border-radius:20px; padding:13px; }
+  .report.a3 .h-timeline .h-box.h-below{ margin-top:30px; }
+  .report.a3 .h-timeline .h-box::after{ width:4px; }
+  .report.a3 .h-timeline .h-box.h-below::after{ top:-30px; height:30px; }
+  .report.a3 .h-timeline .h-node-row::before{ height:7px; }
+  .report.a3 .h-timeline .h-dot{ width:19px; height:19px; }
+  .report.a3 .h-timeline .h-date .d{ font-size:17px; }
+  .report.a3 .h-timeline .h-date .tag{ font-size:17px; }
+
+  .report.a3 .h-timeline .p-row{ margin-bottom:14px; }
+  .report.a3 .h-timeline .p-row:last-child{ margin-bottom:0; }
+  .report.a3 .h-timeline .p-subject,
+  .report.a3 .h-timeline .p-code,
+  .report.a3 .h-timeline .p-name{ font-size:18.5px; }
+  .report.a3 .h-timeline .p-desc{ font-size:17px; margin-top:6px; margin-left:60px; }
+
+  /* 下方兩框：左右外緣與中間分界都跟著 h-slot 的間距走，確保跟上方教材範圍框對齊。
+     ※寬度不可改用 flex:1 1 0——box-sizing:border-box 時 flex-basis:0 會被padding撐開，兩邊會不等寬。 */
+  .report.a3 .bottom-row{ gap:calc(6px * 2); padding:0 6px; }
+  .report.a3 .bottom-row .reward-box,
+  .report.a3 .bottom-row .bottom-block{ width:calc(50% - 6px); margin-top:6px; }
+  .report.a3 .reward-box{ font-size:17px; padding:12px 17px; }
+  .report.a3 .parent-note{ padding:12px 17px; }
+  .report.a3 .parent-note-title{ font-size:17px; }
+  .report.a3 .parent-note-body,
+  .report.a3 .parent-note-sign{ font-size:17px; }
+/* === A3-LAYOUT END === */
+</style>
+<style>
+  /* 登入畫面：未登入時蓋住整個系統 */
+  #loginOverlay{ position:fixed; inset:0; z-index:9999; background:var(--paper);
+    display:none; align-items:center; justify-content:center; padding:16px; }
+  #loginOverlay.show{ display:flex; }
+  #loginOverlay .login-box{ width:100%; max-width:360px; background:var(--card);
+    border:1px solid var(--line); border-radius:12px; padding:28px 24px; }
+  #loginOverlay h2{ margin:0 0 4px; font-size:20px; }
+  #loginOverlay .sub{ margin:0 0 20px; font-size:13px; color:var(--ink-soft); }
+  #loginOverlay label.field{ margin-bottom:12px; }
+  #loginOverlay input{ width:100%; box-sizing:border-box; padding:9px 10px; font-size:15px; }
+  #loginOverlay .btn{ width:100%; padding:10px; font-size:15px; margin-top:4px; }
+  #loginMsg{ min-height:20px; font-size:13px; color:#c0392b; margin-top:10px; }
+  #loginMsg.ok{ color:var(--english); }
+  #forgotPw{ display:inline-block; margin-top:12px; font-size:13px; color:var(--ink-soft); cursor:pointer; text-decoration:underline; }
+  header .user-area{ display:flex; align-items:center; gap:10px; font-size:12px; color:#ccc; }
+  header .user-area button{ background:transparent; color:#fff; border:1px solid #777; border-radius:6px;
+    padding:3px 10px; font-size:12px; cursor:pointer; font-family:inherit; }
+  header .user-area button:hover{ border-color:#fff; }
+  @media print{ #loginOverlay, header .user-area{ display:none !important; } }
+</style>
+<style id="pageSizeStyle">@page{ size:A3 landscape; margin:0; }</style>
+</head>
+<body>
+
+<div id="loginOverlay">
+  <form class="login-box" onsubmit="doLogin(event)">
+    <h2>KUMON 學習報告系統</h2>
+    <p class="sub">請用老師帳號登入</p>
+    <label class="field">Email
+      <input type="email" id="loginEmail" autocomplete="username" required>
+    </label>
+    <label class="field">密碼
+      <input type="password" id="loginPassword" autocomplete="current-password" required>
+    </label>
+    <button type="submit" class="btn btn-primary" id="loginBtn">登入</button>
+    <div id="loginMsg"></div>
+    <a id="forgotPw" onclick="forgotPassword()">忘記密碼？</a>
+  </form>
+</div>
+
+<header>
+  <h1>KUMON 學習報告系統</h1>
+  <div class="user-area">
+    <div class="status" id="connStatus">連線中…</div>
+    <span id="userEmail"></span>
+    <button type="button" id="logoutBtn" onclick="doLogout()" style="display:none;">登出</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="students" class="active">學生名單</button>
+  <button data-tab="progress">進度資料</button>
+  <button data-tab="settings">共用文字設定</button>
+  <button data-tab="preview">預覽 / 輸出 PDF</button>
+  <button data-tab="materials">教材代號對照表</button>
+</nav>
+
+<main>
+
+  <!-- ===================== 學生名單 ===================== -->
+  <section id="panel-students" class="panel active">
+    <div class="card">
+      <h2>新增學生</h2>
+      <div class="row">
+        <label class="field">姓名<input type="text" id="newStudentName" placeholder="例：楊牧芯"></label>
+        <label class="field">暱稱（選填）<input type="text" id="newStudentNick" placeholder="例：牧芯"></label>
+        <button class="btn btn-primary" onclick="addStudent()">新增</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>批次匯入學生（每行一個姓名）</h2>
+      <textarea id="batchImportText" style="min-height:120px;width:100%;" placeholder="楊牧芯&#10;曹隼澈&#10;林芷菱&#10;…"></textarea>
+      <div style="margin-top:8px;">
+        <button class="btn btn-secondary" onclick="batchImportStudents()">批次新增（自動略過已存在的姓名）</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>學生清單（<span id="studentCount">0</span> 位）</h2>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+        <span id="reviewPendingInfo" style="font-size:12.5px;color:#C0562E;"></span>
+        <button class="btn btn-secondary btn-small" onclick="clearAllReviewPending()">全部標示為已確認</button>
+      </div>
+      <input type="text" id="studentSearch" placeholder="搜尋姓名或暱稱…" style="width:100%;margin-bottom:10px;" oninput="renderStudentTable()">
+      <table>
+        <thead><tr><th>姓名</th><th>暱稱</th><th style="width:80px;">狀態</th><th style="width:140px;">最後更新</th><th style="width:220px;">操作</th></tr></thead>
+        <tbody id="studentTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== 進度資料 ===================== -->
+  <section id="panel-progress" class="panel">
+    <div class="card">
+      <div class="row">
+        <label class="field">選擇學生
+          <div class="combo">
+            <input type="text" id="progressStudentSearch" placeholder="輸入姓名或暱稱搜尋…" autocomplete="off"
+              oninput="onProgressStudentSearchInput()" onfocus="onProgressStudentSearchInput()">
+            <div id="progressStudentDropdown" class="combo-dropdown"></div>
+          </div>
+          <select id="progressStudentSelect" onchange="loadProgressForSelected()" style="display:none;"></select>
+        </label>
+        <label class="field">給家長的話（輸入編號）
+          <input type="text" inputmode="numeric" id="parentMsgNoInput" style="width:100px;" placeholder="例：6" onchange="updateParentMsgNo(this.value)">
+        </label>
+        <div id="parentMsgPreview" style="display:none;"></div>
+        <label style="font-size:13.5px;font-weight:700;align-self:center;white-space:nowrap;">
+          <input type="checkbox" id="setupDoneCheckbox" onchange="updateSetupDone(this.checked)"> 這位學生已設定完成
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <label style="font-size:13.5px;font-weight:700;">這位學生學習哪些科目：</label>
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="subjCheck_數學" onchange="updateSubjectSelection('數學', this.checked)"> 數學
+        </label>
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="subjCheck_國語" onchange="updateSubjectSelection('國語', this.checked)"> 國語
+        </label>
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="subjCheck_英文" onchange="updateSubjectSelection('英文', this.checked)"> 英文
+        </label>
+        <div style="font-size:12px;color:var(--ink-soft);flex:1 1 200px;">勾選後，下面表格會出現對應科目列，直接輸入教材代號即可，名稱/說明會自動帶出</div>
+      </div>
+      <div style="margin-top:8px;font-size:12.5px;color:var(--ink-soft);" id="lastUpdatedLine"></div>
+    </div>
+    <div class="card">
+      <h2>★ 目標達成獎勵（開頭文字固定共用，勾選這位學生哪些科目有達成目標）</h2>
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 8px;">開頭文字跟期別/日期在「共用文字設定」分頁調整；這裡只勾選這位學生的達成狀況，報告會自動組出「期別 已達成科目 ＋總點數」這一行。</p>
+      <div class="row">
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="rewardCheck_數學" onchange="updateRewardAchieved('數學', this.checked)"> 數學已達成目標
+        </label>
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="rewardCheck_國語" onchange="updateRewardAchieved('國語', this.checked)"> 國語已達成目標
+        </label>
+        <label style="font-size:13.5px;flex:0 0 auto;">
+          <input type="checkbox" id="rewardCheck_英文" onchange="updateRewardAchieved('英文', this.checked)"> 英文已達成目標
+        </label>
+      </div>
+      <div id="rewardPreview" style="font-size:12.5px;color:var(--ink-soft);white-space:pre-line;line-height:1.6;margin-top:8px;"></div>
+    </div>
+    <div id="periodsContainer"></div>
+  </section>
+
+  <!-- ===================== 共用文字設定 ===================== -->
+  <section id="panel-settings" class="panel">
+    <div class="card">
+      <h2>問候語模板</h2>
+      <p style="font-size:12.5px;color:var(--ink-soft);">用 <code>{nick}</code> 代表暱稱，會自動換成每位學生的暱稱。</p>
+      <textarea id="settingGreeting" style="min-height:60px;"></textarea>
+    </div>
+    <div class="card">
+      <h2>★ 目標達成獎勵（開頭文字＋期別，所有學生共用）</h2>
+      <p style="font-size:12.5px;color:var(--ink-soft);">每位學生實際「哪些科目達成目標」是在「進度資料」分頁勾選，這裡只設定共用的開頭文字、期別/日期跟每科點數。</p>
+      <label class="field">標題（含★符號，報告上獎勵框第一行）<input type="text" id="settingRewardTitle" style="width:100%;" onchange="renderRewardFields()"></label>
+      <label class="field" style="margin-top:8px;">每科可得點數<input type="number" id="settingRewardPoints" style="width:120px;" min="0" onchange="renderRewardFields()"></label>
+      <label class="field" style="margin-top:8px;">期別/日期（會接在開頭文字後面，例：2026年8月）<input type="text" id="settingRewardDate" style="width:100%;" onchange="renderRewardFields()"></label>
+      <label class="field" style="margin-top:8px;">總點數後面的文字（例：＋150<b>點</b>，留空就只顯示數字）<input type="text" id="settingRewardUnit" style="width:120px;" onchange="renderRewardFields()"></label>
+    </div>
+    <div class="card">
+      <h2>★ 給家長的話（標題固定共用，選項數量可自由增減）</h2>
+      <label class="field">標題（含★符號）<input type="text" id="settingParentTitle" style="width:100%;"></label>
+      <br>
+      <div id="parentMsgList"></div>
+      <button class="btn btn-secondary" onclick="addParentMsg()" style="margin-top:8px;">＋ 新增一則</button>
+    </div>
+    <div class="card">
+      <h2>老師署名</h2>
+      <input type="text" id="settingSign" style="width:100%;">
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()">儲存設定</button>
+  </section>
+
+  <!-- ===================== 預覽 / 輸出 ===================== -->
+  <section id="panel-preview" class="panel">
+    <div class="toolbar">
+      <select id="previewStudentSelect"></select>
+      <button class="btn btn-primary" onclick="previewOne()">預覽這位學生</button>
+      <button class="btn btn-primary" onclick="printOne()">輸出這位學生 PDF</button>
+      <label style="font-size:13.5px;white-space:nowrap;">
+        <input type="checkbox" id="bwModeCheckbox" onchange="onBwModeChange()"> 黑白列印模式
+      </label>
+      <span id="scaleDebugInfo" style="font-size:11.5px;color:var(--ink-soft);"></span>
+    </div>
+    <div class="toolbar">
+      <!-- 2026-09-15:這個版本統一輸出A3橫式，不再提供A4/A3切換，「列印全部學生」也只剩一顆。 -->
+      <button class="btn btn-secondary" onclick="printAll()">列印全部學生（A3橫式）</button>
+      <button class="btn btn-secondary" onclick="exportClassSummaryXlsx()">輸出全班學習總表（Excel）</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('summaryFileInput').click()">匯入總表（Excel）批次更新進度</button>
+      <input type="file" id="summaryFileInput" accept=".xlsx,.xls" style="display:none;" onchange="importSummaryFile(this)">
+      <span style="font-size:12px;color:var(--ink-soft);">一位學生一列，4期別×3科的教材代號＋獎勵＋給家長的話；匯出的檔案改完可以再匯入</span>
+    </div>
+    <div id="printArea"></div>
+  </section>
+
+  <!-- ===================== 教材代號對照表 ===================== -->
+  <section id="panel-materials" class="panel">
+    <div class="card">
+      <h2>教材代號對照表</h2>
+      <p style="font-size:12.5px;color:var(--ink-soft);">「代號」「教材名稱」「說明」都可以直接點選修改，改完之後輸入代號會帶出新的內容。內建代號改過的可按「還原預設」；刪除內建代號只是隱藏起來，勾「顯示已刪除的代號」就能復原。<br>※改代號不會連動修改已經輸入在學生進度裡的舊代號。</p>
+      <div class="row" style="align-items:flex-end;gap:8px;flex-wrap:wrap;background:#FAFAF8;padding:10px;border-radius:8px;">
+        <label class="field" style="flex:0 0 auto;">科目
+          <select id="matNewSubj">
+            <option value="數學">數學</option>
+            <option value="國語">國語</option>
+            <option value="英文">英文</option>
+          </select>
+        </label>
+        <label class="field" style="flex:0 0 110px;">代號<input type="text" id="matNewCode" placeholder="例：F121"></label>
+        <label class="field" style="flex:0 0 200px;">教材名稱<input type="text" id="matNewName"></label>
+        <label class="field" style="flex:1 1 220px;">說明<input type="text" id="matNewDesc"></label>
+        <button class="btn btn-primary" onclick="addMaterialCode()" style="flex:0 0 auto;">＋ 新增代號</button>
+      </div>
+      <div class="row">
+        <label class="field">科目
+          <select id="matSubjFilter" onchange="renderMaterialTable()">
+            <option value="all">全部</option>
+            <option value="數學">數學</option>
+            <option value="國語">國語</option>
+            <option value="英文">英文</option>
+          </select>
+        </label>
+        <label class="field">搜尋（代號或教材名稱）
+          <input type="text" id="matSearch" oninput="renderMaterialTable()" placeholder="例：C51 或 除法">
+        </label>
+        <label class="field" style="flex:0 0 auto;white-space:nowrap;">
+          <span style="font-size:12.5px;">共 <b id="matCount">0</b> 筆</span><br>
+          <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="matShowDeleted" onchange="renderMaterialTable()"> 顯示已刪除的代號
+          </label>
+        </label>
+      </div>
+      <table>
+        <thead><tr><th style="width:64px;">科目</th><th style="width:120px;">代號</th><th style="width:220px;">教材名稱</th><th>說明</th><th style="width:96px;">操作</th></tr></thead>
+        <tbody id="materialTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+/* ============== Firebase 設定：請貼上你的專案設定值 ============== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyD5QbEYiyDBzl1LmowR0pzz_xy_RJheiWo",
+  authDomain: "kumonyuanlin-a11bd.firebaseapp.com",
+  databaseURL: "https://kumonyuanlin-a11bd-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "kumonyuanlin-a11bd",
+};
+const DB_ROOT = "learningReports"; // 跟其他工具共用同一個 Firebase 專案時，用這個路徑區隔資料
+
+/* 教材代號對照表（數學/國語/英文 → {代號: {name, desc}}），依上傳的 Excel 內容產生 */
+const MATERIAL_LOOKUP = {"數學":{"6A1":{"name":"數一數（到5）1","desc":"透過數物件和點點，數數到3"},"6A11":{"name":"數一數（到5）2","desc":"透過數物件和點點，數數到4"},"6A21":{"name":"數一數（到5）3","desc":"透過數物件和點點，數數到5"},"6A31":{"name":"數一數（到10）1","desc":"數10個以內的物件和數數到4"},"6A41":{"name":"數一數（到10）2","desc":"數10個以內的物件和數數到5"},"6A51":{"name":"數一數（到10）3","desc":"數10個以內的物件和數數到6"},"6A61":{"name":"數一數（到10）4","desc":"數10個以內的物件和數數到7"},"6A71":{"name":"數一數（到10）5","desc":"數10個以內的物件和數數到8"},"6A81":{"name":"數一數（到10）6","desc":"數10個以內的物件和數數到9"},"6A91":{"name":"數一數（到10）7","desc":"數10個以內的物件和數數到10"},"6A101":{"name":"念數字（到10）1","desc":"熟悉10個以內的數量和認讀7以內的數字"},"6A111":{"name":"念數字（到10）2","desc":"熟悉10個以內的數量和認讀10以內的數字"},"6A121":{"name":"念數字（到10）3","desc":"熟悉10個以內的數量和認讀10以內的數字"},"6A131":{"name":"念數字（到10）4","desc":"熟悉10個以內的數量和認讀10以內的數字"},"6A141":{"name":"念數字（到10）5","desc":"熟悉10個以內的數量和認讀10以內的數字"},"6A151":{"name":"數圓點（到10）1","desc":"認讀5個以內的圓點，辨認數目"},"6A161":{"name":"數圓點（到10）2","desc":"認讀6個以內的圓點，辨認數目"},"6A171":{"name":"數圓點（到10）3","desc":"認讀7個以內的圓點，辨認數目"},"6A181":{"name":"數圓點（到10）4","desc":"認讀9個以內的圓點，辨認數目"},"6A191":{"name":"數圓點（到10）5","desc":"認讀10個以內的圓點，辨認數目"},"5A1":{"name":"念數字(到30）1","desc":"認讀10以內的數字和數字表，認讀數字和辨認10以內物件的數目"},"5A11":{"name":"念數字(到30）2","desc":"認讀25以內的數字和數字表，認讀數字和辨認20以內物件的數目"},"5A21":{"name":"念數字(到30）3","desc":"認讀25以內的數字和數字表，認讀數字和辨認20以內物件的數目"},"5A31":{"name":"念數字(到30）4","desc":"認讀25以內的數字和數字表，認讀數字和辨認20以內物件的數目"},"5A41":{"name":"念數字(到30）5","desc":"認讀25以內的數字和數字表，認讀數字和辨認20以內物件的數目"},"5A51":{"name":"念數字(到30）6","desc":"認讀25以內的數字和數字表，認讀數字和辨認20以內物件的數目"},"5A61":{"name":"念數字(到30）7","desc":"認讀30以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A71":{"name":"念數字(到30）8","desc":"認讀30以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A81":{"name":"念數字(到30）9","desc":"認讀30以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A91":{"name":"念數字(到30）10","desc":"認讀30以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A101":{"name":"1到30的數字順序1","desc":"認讀40以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A111":{"name":"1到30的數字順序2","desc":"認讀40以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A121":{"name":"1到30的數字順序3","desc":"認讀40以內的數字和數字表，認讀數字和辨認30以內物件的數目"},"5A131":{"name":"1到40的數字順序1","desc":"認讀50以內的數字和數字表，認讀數字和辨認40以內物件的數目"},"5A141":{"name":"1到40的數字順序2","desc":"認讀50以內的數字和數字表，認讀數字和辨認40以內物件的數目"},"5A151":{"name":"1到40的數字順序3","desc":"認讀50以內的數字和數字表，認讀數字和辨認40以內物件的數目"},"5A161":{"name":"1到50的數字順序1","desc":"認讀50以內的數字和數字表，認讀數字和辨認50以內物件的數目"},"5A171":{"name":"1到50的數字順序2","desc":"認讀50以內的數字和數字表，認讀數字和辨認50以內物件的數目"},"5A181":{"name":"1到50的數字順序3","desc":"認讀50以內的數字和數字表，認讀數字和辨認50以內物件的數目"},"5A191":{"name":"51到100的數字","desc":"認讀100以內的數字，找出數列中的數字，或用線把數字連起來，熟悉100以內的數字"},"4A1":{"name":"描數字1","desc":"透過描數字的練習，熟悉數字的形狀"},"4A11":{"name":"描數字2","desc":"透過描數字的練習，熟悉數字的形狀"},"4A21":{"name":"描數字3","desc":"透過描數字的練習，熟悉數字的形狀"},"4A31":{"name":"描數字4","desc":"透過描數字的練習，熟悉數字的形狀"},"4A41":{"name":"1到10的數字1","desc":"通過重複抄寫相同的數字來練習寫數字1~4"},"4A51":{"name":"1到10的數字2","desc":"通過重複抄寫相同的數字來練習寫數字5~7"},"4A61":{"name":"1到10的數字3","desc":"通過重複抄寫相同的數字來練習寫數字8~10"},"4A71":{"name":"1到10的數字4","desc":"透過填寫數字表上的空格、完成數列題目和數圓點練習來獨立書寫數字1到10"},"4A81":{"name":"1到10的數字5","desc":"透過填寫數字表上的空格、完成數列題目和數圓點練習來獨立書寫數字1到10"},"4A91":{"name":"1到10的數字6","desc":"透過填寫數字表上的空格、完成數列題目和數圓點練習來獨立書寫數字1到10"},"4A101":{"name":"1到20的數字1","desc":"透過填寫數字表上的空格和完成數列練習寫數字11到20"},"4A111":{"name":"1到20的數字2","desc":"透過填寫數字表上的空格和完成數列練習寫數字11到20"},"4A121":{"name":"1到30的數字1","desc":"透過填寫數字表上的空格和完成數列練習寫數字21到30"},"4A131":{"name":"1到30的數字2","desc":"透過填寫數字表上的空格和完成數列練習寫數字21到30"},"4A141":{"name":"1到50的數字1","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"4A151":{"name":"1到50的數字2","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"4A161":{"name":"1到50的數字3","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"4A171":{"name":"1到50的數字4","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"4A181":{"name":"1到50的數字5","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"4A191":{"name":"1到50的數字6","desc":"透過書寫連續數字、填寫數字表和數字盤上的空格及完成數列的題目，加深1到50的數序理解。"},"3A1":{"name":"1到100的數字1","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字31以內排列的練習，加深1到120的數序理解。"},"3A11":{"name":"1到100的數字2","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字51以內排列的練習，加深1到120的數序理解。"},"3A21":{"name":"1到100的數字3","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字61以內排列的練習，加深1到120的數序理解。"},"3A31":{"name":"1到100的數字4","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字71以內排列的練習，加深1到120的數序理解。"},"3A41":{"name":"1到100的數字5","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字81以內排列的練習，加深1到120的數序理解。"},"3A51":{"name":"1到100的數字6","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字101以內排列的練習，加深1到120的數序理解。"},"3A61":{"name":"1到120的數字","desc":"通過書寫連續數字、填寫數字盤上的空格和完成數字121以內排列的練習，加深1到120的數序理解。"},"3A71":{"name":"“加1”①（到12+1）","desc":"填寫下一個數和「加1」的學習"},"3A81":{"name":"“加1”②（到18+1）","desc":"做「加1」題目的學習，讓學生具備足夠的「加1」的計算能力"},"3A91":{"name":"“加1”③（到24+1）","desc":"做「加1」題目的學習，讓學生具備足夠的「加1」的計算能力"},"3A101":{"name":"“加1”④（到30+1）","desc":"做「加1」題目的學習，讓學生具備足夠的「加1」的計算能力"},"3A111":{"name":"“加1”⑤（到60+1）","desc":"做「加1」題目的學習，讓學生具備足夠的「加1」的計算能力"},"3A121":{"name":"“加1”⑥（到1000+1）","desc":"學習出現較大被加數的「加1」"},"3A131":{"name":"“加2”①（到14+2）","desc":"是用「下、下一個數」來導入學習「加2」，讓學生具備足夠的「加2」的計算能力"},"3A141":{"name":"“加2”②（到18+2）","desc":"做「加2」題目的學習，讓學生具備足夠的「加2」的計算能力"},"3A151":{"name":"“加2”③（到32+2）","desc":"做「加2」題目的學習，讓學生具備足夠的「加2」的計算能力"},"3A161":{"name":"“加3”①（到14+3）","desc":"是用「下、下、下一個數」來導入學習「加3」，讓學生具備足夠的「加3」的計算能力"},"3A171":{"name":"“加3”②（到21+3）","desc":"做「加3」題目的學習，讓學生具備足夠的「加3」的計算能力"},"3A181":{"name":"“加1∼加3”①","desc":"用每頁教材的加數都是相同的編排方式，做「加1」、「加2」和「加3」的混合練習"},"3A191":{"name":"“加1∼加3”②","desc":"用每頁教材的加數都是相同的編排方式，做「加1」、「加2」和「加3」的混合練習"},"2A1":{"name":"3A的複習","desc":"複習「加1」到「加3」"},"2A11":{"name":"“加4”①（到12+4）","desc":"運用「1＋3＝4，那麼1＋4＝?」的題組，導入學習「加4」"},"2A21":{"name":"“加4”②（到16+4）","desc":"做「加4」題目的練習，讓學生具備足夠的「加4」的計算能力"},"2A31":{"name":"“加5”①（到12+5）","desc":"運用「1＋4＝5，那麼1＋5＝?」的題組，導入學習「加5」"},"2A41":{"name":"“加5”②（到15+5）","desc":"做「加5」題目的練習，讓學生具備足夠的「加5」的計算能力"},"2A51":{"name":"“加1∼加5”①","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加5」"},"2A61":{"name":"“加1∼加5”②","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加5」"},"2A71":{"name":"“加6”①（到12+6）","desc":"運用「1＋5＝6，那麼1＋6＝?」的題組，導入學習「加6」"},"2A81":{"name":"“加6”②（到14+6）","desc":"做「加6」題目的練習，讓學生具備足夠的「加6」的計算能力"},"2A91":{"name":"“加7”①（到11+7）","desc":"運用「1＋6＝7，那麼1＋7＝?」的題組，導入學習「加7」"},"2A101":{"name":"“加7”②（到13+7）","desc":"做「加7」題目的練習，讓學生具備足夠的「加7」的計算能力"},"2A111":{"name":"“加1∼加7”①","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加7」"},"2A121":{"name":"“加1∼加7”②","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加7」"},"2A131":{"name":"“加8”①（到11+8）","desc":"運用「1＋7＝8，那麼1＋8＝?」的題組，導入學習「加8」"},"2A141":{"name":"“加8”②（到12+8）","desc":"做「加8」題目的練習，讓學生具備足夠的「加8」的計算能力"},"2A151":{"name":"“加9”（到12+9）","desc":"運用「1＋8＝9，那麼1＋9＝?」的題組，導入學習「加9」"},"2A161":{"name":"“加9”和“加10”（到12+9和15+10）","desc":"做「加9」、「加10」題目的練習，讓學生具備足夠的「加9」、「加10」的計算能力"},"2A171":{"name":"“加1∼加10”①","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加10」"},"2A181":{"name":"“加1∼加10”②","desc":"用每頁教材的加數都是相同的編排方式，學習「加1」到「加10」"},"2A191":{"name":"“加1∼加10”③","desc":"用加數會混合出現的編排方式，學習「加1」到「加10」"},"A1":{"name":"加法1（2A的複習）","desc":"練習1位數＋1位數的題目，讓學生充分掌握1位數＋1位數的加法(每張20題)"},"A11":{"name":"加法2（和為12以內）","desc":"練習1位數＋1位數的題目，讓學生充分掌握1位數＋1位數的加法(每張22題)"},"A21":{"name":"加法3（和為15以內）","desc":"練習1位數＋1位數的題目，讓學生充分掌握1位數＋1位數的加法(每張23題)"},"A31":{"name":"加法4（和為18以內）","desc":"練習1位數＋1位數的題目，讓學生充分掌握1位數＋1位數的加法(每張24題)"},"A41":{"name":"加法5（和為20以內）","desc":"主要練習2位數＋1位數的題目，讓學生充分掌握2位數的加法(每張25題)"},"A51":{"name":"加法6（和為24以內）","desc":"主要練習2位數＋1位數的題目，讓學生充分掌握2位數的加法"},"A61":{"name":"加法7（和為28以內）","desc":"主要練習2位數＋1位數及1位數＋2位數的題目，讓學生充分掌握2位數的加法"},"A71":{"name":"加法8（加法的綜合練習）","desc":"包括2位數＋2位數以及大數字加法的綜合練習"},"A81":{"name":"減法1（減1）","desc":"用「上一個數」的方法來導入學習減1"},"A91":{"name":"減法2（減2）","desc":"用「上、上一個數」的方法來導入學習減2"},"A101":{"name":"減法3（減3）","desc":"用「上、上、上一個數」的方法來導入學習減3"},"A111":{"name":"減法4（減1∼減3）","desc":"練習減1∼減3的題目，讓學生能夠自己解答減1∼減3"},"A121":{"name":"減法5（減1∼減5）","desc":"練習減1∼減5的題目，讓學生能夠自己解答減1∼減5"},"A131":{"name":"減法6（10以內的減法）","desc":"用被減數是固定的編排方式，學習「10以內的減法」"},"A141":{"name":"減法7（11以內的減法）","desc":"用被減數是固定的編排方式，學習「10以內的減法」到「20以內的減法」"},"A151":{"name":"減法8（12以內的減法）","desc":"用被減數是固定的編排方式，學習「10以內的減法」到「20以內的減法」"},"A161":{"name":"減法9（14以內的減法）","desc":"用被減數是固定的編排方式，學習「10以內的減法」到「20以內的減法」"},"A171":{"name":"減法10（16以內的減法）","desc":"用被減數是固定的編排方式，學習「10以內的減法」到「20以內的減法」"},"A181":{"name":"減法11（20以內的減法）","desc":"用被減數是固定的編排方式(部分隨機)，學習「10以內的減法」到「20以內的減法」"},"A191":{"name":"減法12（減法的綜合練習）","desc":"學習被減數和減數隨機出現的減法(2位數－1位數橫式計算題會集中出現)"},"B1":{"name":"加法(A的複習)","desc":"橫式加法的複習"},"B11":{"name":"和為100以內的加法1","desc":"導入及學習直式加法(個位進位至十位的學習)"},"B21":{"name":"和為100以內的加法2","desc":"導入及練習需要進位的二位數＋二位數直式加法(個位進位至十位的學習)"},"B31":{"name":"和為100以內的加法3","desc":"練習二位數＋二位數直式加法(個位進位至十位的學習)"},"B41":{"name":"二位數的加法1","desc":"導入及練習需要連續進位的二位數＋二位數和為三位數的直式加法"},"B51":{"name":"二位數的加法2","desc":"學習需要連續進位的二位數＋二位數和為三位數的直式加法(出現應用題和填空題)"},"B61":{"name":"二位數的加法3","desc":"學習需要連續進位的二位數＋二位數和為三位數的直式加法(出現應用題、填空題、橫式加法)"},"B71":{"name":"三位數的加法1","desc":"學習需要進位1次的三位數＋三位數加法(出現應用題和填空題)"},"B81":{"name":"三位數的加法2","desc":"學習需要進位2次以上的三位數＋三位數加法(出現應用題和填空題)"},"B91":{"name":"三位數的加法3","desc":"學習需要進位2次以上的三位數＋三位數加法(出現應用題、填空題、橫式加法)"},"B101":{"name":"減法1(A的複習)","desc":"橫式減法的複習"},"B111":{"name":"減法2(A的複習)","desc":"橫式減法的複習"},"B121":{"name":"二位數的減法1","desc":"導入直式減法的學習"},"B131":{"name":"二位數的減法2","desc":"導入需要退位的二位數-二位數的學習"},"B141":{"name":"二位數的減法3","desc":"學習需要退位的二位數-二位數的題目(請開始背九九乘法)"},"B151":{"name":"二位數的加法和減法","desc":"練習二位數的加法和減法(出現填空題)"},"B161":{"name":"三位數的減法1","desc":"練習三位數-二位數減法（退位1次）"},"B171":{"name":"三位數的減法2","desc":"練習三位數-三位數減法（退位1次）"},"B181":{"name":"三位數的減法3","desc":"練習三位數-三位數減法（退位2次）"},"B191":{"name":"三位數的減法4","desc":"練習三位數-三位數減法(出現被減數含有「0」並需要連續退位的題目)"},"C1":{"name":"C以前的複習","desc":"前7張複習加法，後3張複習減法"},"C11":{"name":"3以內的九九乘法","desc":"學習3以內的九九乘法"},"C21":{"name":"5以內的九九乘法","desc":"學習5以內的九九乘法"},"C31":{"name":"7以內的九九乘法","desc":"學習7以內的九九乘法"},"C41":{"name":"9以內的九九乘法","desc":"學習9以內的九九乘法"},"C51":{"name":"二位數 x 一位數1","desc":"導入需要進位的直式乘法的學習(×2∼4)"},"C61":{"name":"二位數 x 一位數2","desc":"學習二位數×一位數的乘法[×5∼7（包括×2∼4）]"},"C71":{"name":"二位數 x 一位數3","desc":"學習二位數×一位數的乘法[×8∼9（包括×2∼7）]"},"C81":{"name":"二位數 x 一位數4","desc":"學習二位數×一位數的乘法"},"C91":{"name":"二位數 x 一位數5","desc":"學習二位數×一位數的乘法(出現橫式乘法)"},"C101":{"name":"三位數.四位數 x 一位數","desc":"學習三位數.四位數 x 一位數的乘法"},"C111":{"name":"九九乘法的逆算","desc":"學習九九乘法的逆算及導入除法"},"C121":{"name":"有餘數的除法1","desc":"用⑴ 6÷2=□ ⑵ 7÷2=3⋯1的題組，學習有餘數的除法"},"C131":{"name":"有餘數的除法2","desc":"學習有餘數的除法"},"C141":{"name":"有餘數的除法3","desc":"學習有餘數的除法"},"C151":{"name":"有餘數的除法4","desc":"學習有餘數的除法(出現商大於或等於10的除法題目)"},"C161":{"name":"二位數 ÷ 一位數1","desc":"學習二位數÷一位數(出現被除數的十位數字不能整除的除法)"},"C171":{"name":"二位數 ÷ 一位數2","desc":"學習有餘數的二位數÷一位數的除法"},"C181":{"name":"三位數 ÷ 一位數1","desc":"學習三位數÷一位數的除法(出現商的十位數字含有「0」的題目)"},"C191":{"name":"三位數 ÷ 一位數2","desc":"學習三位數÷一位數且有餘數的除法"},"D1":{"name":"D以前的複習","desc":"複習直式加法和乘法"},"D11":{"name":"二位數 x 二位數1","desc":"導入二位數×二位數的直式乘法學習"},"D21":{"name":"二位數 x 二位數2","desc":"學習二位數×二位數的直式乘法"},"D31":{"name":"二位數 x 二位數3","desc":"學習二位數×二位數的直式乘法"},"D41":{"name":"三位數 x 二位數","desc":"學習三位數×二位數的直式乘法(50b出現三位數×三位數)"},"D51":{"name":"加法.減法","desc":"複習加法和減法"},"D61":{"name":"乘法.除法1","desc":"複習直式乘法和除法"},"D71":{"name":"乘法.除法2","desc":"複習橫式乘法和直式除法"},"D81":{"name":"二位數的除法1","desc":"導入除數是二位數的除法的學習"},"D91":{"name":"二位數的除法2","desc":"學習二位數的除法"},"D101":{"name":"二位數的除法3","desc":"學習二位數的除法"},"D111":{"name":"二位數的除法4","desc":"學習二位數的除法"},"D121":{"name":"二位數的除法5","desc":"學習二位數的除法(出現應用題)"},"D131":{"name":"商為二位數以上的除法1","desc":"學習商為二位數以上的除法"},"D141":{"name":"商為二位數以上的除法2","desc":"學習包含商為三位數或以上的除法"},"D151":{"name":"分數","desc":"學習將假分數化成帶分數和帶分數與假分數互相轉換的題目"},"D161":{"name":"約分1","desc":"學習用質數（2、3、5、7）約分"},"D171":{"name":"約分2","desc":"學習用一位數的非質數（4、6、8、9）約分及一位數不固定因數的約分"},"D181":{"name":"約分3","desc":"學習一位數不固定因數的約分(會出現因數為二位數的題目)"},"D191":{"name":"約分4","desc":"學習不固定因數（包含二位數）的約分及求最大公因數的方法"},"E1":{"name":"E以前的複習","desc":"C教材、D教材的複習"},"E11":{"name":"分數加法1","desc":"學習相加後為含假分數的帶分數而需改為含真分數的帶分數的同分母的加法"},"E21":{"name":"分數加法2","desc":"學習相加後為假分數需先改為帶分數再約分的同分母的加法"},"E31":{"name":"分數加法3","desc":"學習異分母加法的導入"},"E41":{"name":"分數加法4","desc":"學習異分母加法(出現求最小公倍數的題目)"},"E51":{"name":"分數加法5","desc":"學習異分母加法"},"E61":{"name":"分數加法6","desc":"學習異分母加法"},"E71":{"name":"分數加法7","desc":"學習異分母加法"},"E81":{"name":"分數加法8","desc":"學習異分母加法"},"E91":{"name":"分數加法9","desc":"學習異分母加法(出現求二個數都是二位數最小公倍數及約分的題目)"},"E101":{"name":"分數減法1","desc":"學習同分母及異分母的減法"},"E111":{"name":"分數減法2","desc":"學習同分母但需借位的減法及異分母的減法"},"E121":{"name":"分數減法3","desc":"學習異分母但需借位的減法"},"E131":{"name":"分數的加法和減法","desc":"學習分數的加減法及約分"},"E141":{"name":"分數的乘法1","desc":"學習分數的乘法(需先約分、帶分數×真分數、帶分數×帶分數)"},"E151":{"name":"分數的乘法2","desc":"學習分數的乘法(分數×整數、整數×分數)"},"E161":{"name":"分數的除法","desc":"學習包括分數÷整數的分數的除法"},"E171":{"name":"分數的乘法和除法","desc":"學習分數的乘法和除法"},"E181":{"name":"二個分數的計算1","desc":"學習二個分數的計算(加、減、乘、除各2∼3張)"},"E191":{"name":"二個分數的計算2","desc":"學習二個分數的計算(加、減、乘、除各1張及混合)"},"F1":{"name":"F以前的複習1","desc":"D教材、E教材的複習"},"F11":{"name":"F以前的複習2","desc":"D教材、E教材的複習"},"F21":{"name":"三個分數的乘除","desc":"學習三個分數的乘除"},"F31":{"name":"三個分數的加法1","desc":"學習三個分數的加法(會學習三個數的最小公倍數的求法)"},"F41":{"name":"三個分數的加法2","desc":"學習三個分數含帶分數的加法"},"F51":{"name":"三個分數的加減","desc":"學習三個分數的加減(出現使用交換律的題目)"},"F61":{"name":"計算的順序1","desc":"學習先計算（）的題目"},"F71":{"name":"計算的順序2","desc":"學習先乘除後加減的題目"},"F81":{"name":"計算的順序3","desc":"學習三個分數的計算的綜合練習"},"F91":{"name":"四個以上的分數計算1","desc":"學習可省略步驟、巧妙計算的題目"},"F101":{"name":"四個以上的分數計算2","desc":"學習四個分數以上的分數計算"},"F111":{"name":"四個以上的分數計算3","desc":"學習四個分數以上的分數計算"},"F121":{"name":"四個以上的分數計算4","desc":"學習含大括弧、中括弧的分數計算"},"F131":{"name":"分數和小數1","desc":"學習小數化為分數及含小數的二個數的計算"},"F141":{"name":"分數和小數2","desc":"學習含小數的三個數的計算"},"F151":{"name":"分數和小數3","desc":"學習含小數的三個數以上的計算"},"F161":{"name":"應用問題1","desc":"學習求結果的應用問題"},"F171":{"name":"應用問題2","desc":"學習求x的題目及由結果來求答案的應用問題"},"F181":{"name":"小數1","desc":"學習小數加法、減法、乘法"},"F191":{"name":"小數2","desc":"學習小數除法、小數X整數、小數×10、100⋯⋯ ÷10、100⋯⋯、小數加法、減法、乘法、除法"},"G1":{"name":"G以前的複習1","desc":"D151∼F教材的複習"},"G11":{"name":"G以前的複習2","desc":"D151∼F教材的複習"},"G21":{"name":"正負數的加減1","desc":"學習整數、分數加減法的導入"},"G31":{"name":"正負數的加減2","desc":"學習分數加減法(含需以整數借位的題目)"},"G41":{"name":"正負數的加減3","desc":"學習分數加減法[以先去掉（）的題目為主]"},"G51":{"name":"正負數的加減4","desc":"學習分數加減法(同樣符號的先計算的題目)"},"G61":{"name":"正負數的乘法","desc":"學習整數、分數的乘法、乘方的題目(生先判斷好正負符號後再計算)"},"G71":{"name":"正負數的除法","desc":"學習整數、分數的乘除、含乘方的乘除的題目"},"G81":{"name":"正負數的四則運算1","desc":"學習正負數的四則運算"},"G91":{"name":"正負數的四則運算2","desc":"學習正負數的四則運算(出現繁分數的題目)"},"G101":{"name":"代數式的值1","desc":"學習把數字代入文字後再計算的題目，文字只有1種"},"G111":{"name":"代數式的值2","desc":"學習把數字代入文字後再計算的題目，文字有2種以上"},"G121":{"name":"代數式的計算1","desc":"學習合併同類項的題目"},"G131":{"name":"代數式的計算2","desc":"學習先去括號、再合併同類項的題目"},"G141":{"name":"代數式的計算3","desc":"學習直式計算及將括號外的整數、分數乘以括號內的各項後再去掉括號的題目"},"G151":{"name":"代數式的計算4","desc":"學習分數形式的代數值的計算"},"G161":{"name":"一元一次方程式1","desc":"學習用心算求值、移項及驗算"},"G171":{"name":"一元一次方程式2","desc":"學習直接以分數來運算及先去掉（）後再移項"},"G181":{"name":"一元一次方程式3","desc":"學習先將兩邊同乘某數，去分母後再運算"},"G191":{"name":"一元一次方程式4","desc":"學習先將兩邊同乘某數，去分母後再運算"},"H1":{"name":"H以前的複習1","desc":"H以前的複習"},"H11":{"name":"H以前的複習2","desc":"H以前的複習"},"H21":{"name":"二元一次聯立方程式1","desc":"學習利用①±②消去x或y"},"H31":{"name":"二元一次聯立方程式2","desc":"學習先將一個或兩個方程式乘以幾倍後，再用加減消去法計算及思考「先消去x還是先消去y，才能更快解答」的題型"},"H41":{"name":"二元一次聯立方程式3","desc":"學習利用去括號、移項等方式整理算式後再運算的題型"},"H51":{"name":"二元一次聯立方程式4","desc":"學習利用去括號、移項等方式整理算式後再運算的題型"},"H61":{"name":"二元一次聯立方程式5","desc":"學習利用代入消去法的題型及思考「使用加減消去法還是代入消去法，才\n能更快解答」的題型"},"H71":{"name":"三元、四元一次聯立方程式1","desc":"學習三元一次聯立方程式"},"H81":{"name":"三元、四元一次聯立方程式2","desc":"學習三元、四元一次聯立方程式"},"H91":{"name":"方程式的應用問題1","desc":"學習文字方程式及一元一次方程式的應用問題"},"H101":{"name":"方程式的應用問題2","desc":"學習聯立方程式的應用問題"},"H111":{"name":"單項式及多項式的計算1","desc":"學習單項式的乘法、除法、乘除法"},"H121":{"name":"單項式及多項式的計算2","desc":"學習去括號後再整理算式的題型、含分數形式的題型"},"H131":{"name":"多項式的乘法","desc":"學習多項式的乘法"},"H141":{"name":"利用公式的多項式乘法","desc":"學習利用公式的多項式乘法(出現乘法公式)"},"H151":{"name":"因式分解1","desc":"學習提出公因式及利用公式(a±b)2做因式分解"},"H161":{"name":"因式分解2","desc":"學習利用公式(a+b) (a-b )做因式分解及答案為( x+a) ( x+b)形式的因式分解"},"H171":{"name":"因式分解3","desc":"學習答案為(ax+b )(cx+d )形式的因式分解"},"H181":{"name":"因式分解4","desc":"學習利用提出公因式及提出公式把多項式當作一項的因式分解"},"H191":{"name":"因式分解5","desc":"學習利用提出公因式及提出公式把多項式當作一項的因式分解(出現雙二次式 )"},"I1":{"name":"I以前的複習1","desc":"I以前的複習"},"I11":{"name":"I以前的複習2","desc":"I以前的複習"},"I21":{"name":"平方根1","desc":"學習開根號及化簡根號"},"I31":{"name":"平方根2","desc":"學習平方根的乘法及加減法及多項式的乘法"},"I41":{"name":"平方根3","desc":"學習將分母有理化（分母為單項式）及比較大小"},"I51":{"name":"一元二次方程式1","desc":"學習用因式分解法解一元二次方程式"},"I61":{"name":"一元二次方程式2","desc":"學習用公式解，解一元二次方程式"},"I71":{"name":"一元二次方程式3","desc":"學習用公式解，解一元二次方程式(出現能因式分解的題目和不能因式分解的題目混合在一起)"},"I81":{"name":"不等式1","desc":"學習不等式兩邊同除以負數，不等號要改變方向"},"I91":{"name":"不等式2","desc":"學習聯立不等式"},"I101":{"name":"一次函數與圖形1","desc":"學習在坐標上描點，然後畫一次函數的圖形及透過一次函數的圖形求斜率和y截距"},"I111":{"name":"一次函數與圖形2","desc":"學習透過斜率和y截距、斜率和已知的點來畫圖形及透過圖形求斜率和y截距，並求直線的方程式"},"I121":{"name":"一次函數與圖形3","desc":"學習透過運算求得直線的方程式以及 與x軸或y軸平行的圖形"},"I131":{"name":"一次函數與圖形4","desc":"學習求二直線的交點坐標"},"I141":{"name":"二次函數與圖形1","desc":"學習在坐標上描點，然後畫二次函數的圖形及畫圖形，並求和y軸的交點和頂點坐標"},"I151":{"name":"二次函數與圖形2","desc":"學習改寫為完全平方式，並求頂點坐標及解二次方程式，求函數與x軸的交點坐標"},"I161":{"name":"二次函數與圖形3","desc":"學習求拋物線的頂點、與x軸及y軸的交點，並畫圖形及求拋物線和直線、拋物線和拋物線的交點坐標"},"I171":{"name":"勾股定理1","desc":"學習求直角三角形的邊長"},"I181":{"name":"勾股定理2","desc":"學習求三角形的邊長和面積、證明勾股定理及求二點間的距離"},"I191":{"name":"勾股定理3","desc":"學習勾股定理在坐標圖形、平面圖形和立體圖形上的應用"},"J1":{"name":"多項式的乘法","desc":"學習多項式的運算及乘法公式"},"J11":{"name":"因式分解1","desc":"H教材的複習"},"J21":{"name":"因式分解2","desc":"學習提出多項式來因式分解"},"J31":{"name":"因式分解3","desc":"學習按降冪排列整理的二次多項式（平方項的係數：1）及按降冪排列整理的二次多項式（平方項的係數：2以上）"},"J41":{"name":"因式分解4","desc":"學習平方差形式的二次多項式及立方和、立方差公式"},"J51":{"name":"因式分解5","desc":"學習雙二次多項式、把多項式當作一項及 整理成A、B、C的多項式"},"J61":{"name":"分式","desc":"學習先因式分解再約分、分式的乘除法、先通分再加減及繁分式"},"J71":{"name":"無理數1","desc":"學習平方根的計算、分母的有理化及開雙重根號"},"J81":{"name":"無理數2","desc":"學習無理式的值及開文字式的根號"},"J91":{"name":"一元二次方程式1","desc":"學習只有實數解的一元二次方程式"},"J101":{"name":"一元二次方程式2","desc":"學習只有實數解的一元二次方程式"},"J111":{"name":"虛數與一元二次方程式","desc":"學習虛數的運算、有虛數解的一元二次方程式"},"J121":{"name":"判別式","desc":"學習利用判別式判斷方程式的解"},"J131":{"name":"根與係數的關係","desc":"學習根與係數的關係"},"J141":{"name":"聯立方程式","desc":"學習用代入消去法求一次式和二次式的解、用加減消去法求解。因式分解後，用代入消去法求解及需善用技巧來求解"},"J151":{"name":"多項式的除法","desc":"學習多項式的除法和分式"},"J161":{"name":"餘式定理","desc":"學習餘式定理"},"J171":{"name":"因式定理","desc":"學習利用因式分解來解高次方程式、利用因式定理來因式分解及解高次方程式"},"J181":{"name":"恆等式的證明","desc":"學習恆等式、等式的證明及有條件的等式的證明"},"J191":{"name":"不等式的證明","desc":"學習分式的值、不等式的證明、 利用算術平均數≥幾何平均數來證明不等式"},"K1":{"name":"一次函數的複習","desc":"學習一次函數的圖形、圖形的交點和方程式的解之間的關係"},"K11":{"name":"二次函數的複習","desc":"學習二次函數圖形的頂點和圖形、圖形的交點和方程式的解之間的關係"},"K21":{"name":"二次函數與圖形","desc":"學習二次函數的平移"},"K31":{"name":"求二次函數的方程式","desc":"學習根據條件求二次函數，並畫出圖形"},"K41":{"name":"二次函數的最大值、最小值1","desc":"學習求二次函數的最大值、最小值。根據最大值、最小值求二次函數"},"K51":{"name":"二次函數的最大值、最小值2","desc":"學習根據定義域的變化求最大值、最小值"},"K61":{"name":"二次函數的最大值、最小值3","desc":"學習當圖形移動時，根據定義域求最大值、最小值"},"K71":{"name":"二次函數與二次方程式","desc":"學習求二次函數與x軸或直線的交點個數"},"K81":{"name":"二次函數與二次不等式","desc":"學習根據二次函數的圖形解二次不等式"},"K91":{"name":"二次函數與二次方程式的解","desc":"學習根據二次函數的圖形求二次方程式解的範圍"},"K101":{"name":"高次函數","desc":"學習根據因式分解後的算式，畫出高次函數的圖形"},"K111":{"name":"高次方程式與高次不等式","desc":"學習根據高次函數的圖形解高次不等式"},"K121":{"name":"分式函數的圖形1","desc":"學習求分式函數圖形的漸近線，並畫出圖形"},"K131":{"name":"分式函數的圖形2","desc":"學習求分式函數的值域及求分式函數與一次函數的和函數的圖形的漸近線，並畫出圖形"},"K141":{"name":"分式方程式與分式不等式","desc":"學習求分式函數圖形與直線的交點及解分式方程式、分式不等式"},"K151":{"name":"無理函數的圖形","desc":"學習畫出無理函數的圖形"},"K161":{"name":"無理方程式與無理不等式","desc":"學習利用圖形解無理方程式、無理不等式"},"K171":{"name":"指數的計算","desc":"學習指數運算的公式、 n次方根及分數指數"},"K181":{"name":"指數函數的圖形","desc":"學習指數函數的圖形、比較指數的大小及 求指數函數的最大值、最小值"},"K191":{"name":"指數方程式與指數不等式","desc":"學習指數方程式、指數不等式及求包含指數函數的合成函數的最大值、最小值。"},"L1":{"name":"對數函數","desc":"學習對數的性質和基本的計算方法"},"L11":{"name":"對數的計算、對數函數的圖形","desc":"學習對數計算方及對數函數的圖形"},"L21":{"name":"對數方程式、對數不等式","desc":"學習對數方程式、對數不等式、對數函數的最大值、最小值以及常用對數的使用"},"L31":{"name":"絕對值函數","desc":"學習絕對值函數的圖形、圖形和直線的交點"},"L41":{"name":"極限與導函數","desc":"學習以「平均變化率→導數→導函數」的順序學習微分"},"L51":{"name":"切線","desc":"學習利用微分求切線的斜率和切線的方程式"},"L61":{"name":"極大值與極小值1","desc":"學習三次、四次函數的遞增、遞減和極值"},"L71":{"name":"極大值與極小值2","desc":"學習根據條件求含常數的函數的極大值、極小值"},"L81":{"name":"最大值與最小值1","desc":"學習根據條件求含常數的函數的最大值、最小值"},"L91":{"name":"最大值與最小值2","desc":"學習根據定義域的變化，求高次函數的最大值、最小值"},"L101":{"name":"方程式與不等式的應用","desc":"學習求函數的極值，判斷函數遞增或遞減，藉此求方程式的解和證明不等式"},"L111":{"name":"不定積分與定積分","desc":"學習不定積分以及定積分的計算"},"L121":{"name":"定積分1","desc":"學習定積分的各種性質及其應用"},"L131":{"name":"定積分2","desc":"學習定積分的各種性質及其應用"},"L141":{"name":"面積1","desc":"學習利用定積分求圖形所圍區域的面積"},"L151":{"name":"面積2","desc":"學習利用定積分求圖形所圍區域的面積"},"L161":{"name":"體積","desc":"學習將立體物的截面積作積分，求立體物的體積以及求旋轉體的體積"},"L171":{"name":"速度與距離","desc":"學習利用微分、積分求速度和距離"},"L181":{"name":"微分與積分的綜合練習1","desc":"學習微分、積分的應用問題"},"L191":{"name":"微分與積分的綜合練習2","desc":"學習微分、積分的應用問題"},"M1":{"name":"點與直線1","desc":"學習兩點間的距離、內分點、外分點、中點、重心"},"M11":{"name":"點與直線2","desc":"學習直線方程式、兩直線的平行條件、垂直條件"},"M21":{"name":"點與直線3","desc":"學習垂心、外心、點到直線的距離"},"M31":{"name":"圓1","desc":"學習圓的方程式、圓與直線的位置關係"},"M41":{"name":"圓2","desc":"學習圓的切線、兩個圓的位置關係"},"M51":{"name":"軌跡1","desc":"學習求軌跡方程式(圓)"},"M61":{"name":"軌跡2","desc":"學習求軌跡方程式(圓、直線、拋物線、橢圓)"},"M71":{"name":"區域","desc":"學習劃出滿足方程式條件的區域及在限定區域內求最大值、最小值"},"M81":{"name":"三角比1","desc":"學習90°角以下的三角比"},"M91":{"name":"三角比2","desc":"學習180°角以下的三角比"},"M101":{"name":"三角函數的性質1","desc":"學習三角函數(廣義角、象限)"},"M111":{"name":"三角函數的性質2","desc":"學習三角函數(導入弧度制)"},"M121":{"name":"三角方程式","desc":"學習三角方程式等解法"},"M131":{"name":"三角函數的圖形","desc":"學習透過求點的坐標與描點作圖來熟悉圖形的形狀和特徵"},"M141":{"name":"三角不等式","desc":"學習解三角不等式及函數的最大值、最小值及相對應的θ值"},"M151":{"name":"三角函數的公式1","desc":"學習三角函數的公式"},"M161":{"name":"三角函數的公式2","desc":"學習二倍角公式、三倍角公式、半角公式"},"M171":{"name":"三角函數的公式3","desc":"學習三角函數的疊合、積化和差公式、和差化積公式"},"M181":{"name":"正弦定理、餘弦定理","desc":"學習正弦定理、餘弦定理"},"M191":{"name":"三角形的面積","desc":"學習求三角形的面積"},"N1":{"name":"等差數列","desc":"學習等差數列"},"N11":{"name":"等比數列","desc":"學習等比數列"},"N21":{"name":"各種數列1","desc":"學習數列和公式及求和的符號Σ"},"N31":{"name":"各種數列2","desc":"學習階差數列、分組數列"},"N41":{"name":"遞迴關係式","desc":"學習遞迴關係式及2∼3個連續項之間的遞迴關係式"},"N51":{"name":"數學歸納法","desc":"學習數學歸納法及用數學歸納法證明等式、不等式或命題成立"},"N61":{"name":"無窮數列","desc":"學習無窮數列及數列的極限及其大小關係"},"N71":{"name":"無窮等比數列","desc":"學習無窮等比數列及數列的極限"},"N81":{"name":"無窮等比級數","desc":"學習無窮等比級數及將無窮等比級數應用於循環小數或求點坐標和幾何圖形"},"N91":{"name":"無窮級數","desc":"學習無窮級數並判斷其為收斂或發散"},"N101":{"name":"函數的極限1","desc":"學習當x →a 時，函數的極限"},"N111":{"name":"函數的極限2","desc":"學習當x →∞ , x →-∞時，函數的極限及指數函數、對數函數的極限"},"N121":{"name":"三角函數的極限","desc":"學習函數的極限及其大小關係"},"N131":{"name":"函數的連續、不連續","desc":"學習函數的連續、不連續及介值定理"},"N141":{"name":"微分1","desc":"學習微分(導函數的運算性質及微分的乘、除法運算性質)"},"N151":{"name":"微分2","desc":"學習合成函數的微分、 反函數的微分"},"N161":{"name":"三角函數的微分","desc":"學習三角函數的微分"},"N171":{"name":"對數函數與指數函數的微分","desc":"學習對數函數及 指數函數的導函數"},"N181":{"name":"各種函數的微分與高階導函數","desc":"學習隱函數、以參數式表示的函數的導函數及高階導函數"},"N191":{"name":"導函數的各種性質","desc":"學習可微分與連續、羅爾定理、均值定理"},"O1":{"name":"切線與法線","desc":"學習切線與法線"},"O11":{"name":"函數的遞增、遞減與極值","desc":"學習函數的遞增、遞減與極值"},"O21":{"name":"曲線的凹向性","desc":"學習曲線的凹向性"},"O31":{"name":"最大值與最小值","desc":"學習各種函數或面積的最大值與最小值"},"O41":{"name":"微分的各種應用","desc":"學習微分在方程式、不等式中的應用及速度、加速度、一次近似"},"O51":{"name":"不定積分1","desc":"學習不定積分及先分解分式再求不定積分"},"O61":{"name":"不定積分2","desc":"學習指數函數、三角函數的不定積分"},"O71":{"name":"變數變換法","desc":"學習變數變換法及g' (x)/g(x) 的不定積分"},"O81":{"name":"分部積分法","desc":"學習分部積分法"},"O91":{"name":"定積分","desc":"學習定積分及絕對值函數的定積分"},"O101":{"name":"定積分的變數變換法","desc":"學習定積分的變數變換法及偶函數、奇函數的定積分"},"O111":{"name":"定積分的分部積分法和以定積分表示的函數","desc":"學習定積分的分部積分法及以定積分表示的函數"},"O121":{"name":"黎曼積分與不等式的證明","desc":"學習黎曼積分及不等式的證明"},"O131":{"name":"面積","desc":"學習直線或曲線所圍區域的面積"},"O141":{"name":"體積","desc":"學習物體截面與體積、繞 x軸或y軸旋轉的旋轉體體積"},"O151":{"name":"曲線的長度、速度和距離","desc":"學習曲線的長度與點的運動、容量的變化"},"O161":{"name":"微分方程","desc":"學習解微分方程"},"O171":{"name":"自然科學、社會科學與微分方程","desc":"學習與物理、化學相關的題目"},"O181":{"name":"微分、積分的應用1","desc":"學習微分或積分的應用問題"},"O191":{"name":"微分、積分的應用2","desc":"學習微分、積分的綜合練習"},"XV1":{"name":"平面向量1","desc":"學習向量的基本性質及介紹向量的係數積"},"XV11":{"name":"平面向量2","desc":"學習用位置向量表示內分點、外分點的位置向量、解答與中點、重心和幾何形狀（如：平行四邊\n形）的題目，並證明題目指定的等式"},"XV21":{"name":"平面向量3","desc":"學習參數式、向量的分量、單位向量，並求基向量的線性組合和向量的長度"},"XV31":{"name":"平面向量4","desc":"學習利用向量的分量，在已知的向量方程式或條件中求未知的變數、複習向量概念"},"XV41":{"name":"空間坐標","desc":"學習空間坐標及空間坐標的平移、 學習 球體的方程式"},"XV51":{"name":"空間向量","desc":"學習空間向量、空間反向量、空間向量分量的運算，以及空間零向量的概念，並學習判斷空間中的兩向量是否平行"},"XV61":{"name":"向量內積的基礎","desc":"利用XV51∼60的內容，學習如何求向量的方向餘弦以及兩向量間的夾角及學習向量內積的概念"},"XV71":{"name":"向量的內積","desc":"學習向量的內積"},"XV81":{"name":"向量的應用與綜合練習","desc":"利用學過的向量知識解決進階的向量題目及複習XV41∼85的向量概念"},"XV91":{"name":"向量與圖形","desc":"學習用位置向量表示內分點、外分點，以及兩垂直向量的內積"},"XV101":{"name":"空間中的直線與平面1","desc":"學習利用向量求通過兩點的直線方程式，及通過一點且平行於題目指定的向量的直線方程\n式"},"XV111":{"name":"空間中的直線與平面2","desc":"學習法向量，並利用向量求平面方程式及求點到平面的距離"},"XV121":{"name":"空間中的直線與平面3","desc":"學習利用解聯立方程式求平面方程式"},"XV131":{"name":"直線、平面和球體的方程式","desc":"學習求兩直線或平面的夾角及求向量方程式和球體的方程式"},"XM1":{"name":"矩陣的定義與加減","desc":"學習矩陣的定義、階數相等的矩陣之間的關係"},"XM11":{"name":"矩陣的乘法","desc":"學習矩陣的乘法"},"XM21":{"name":"反方陣","desc":"學習反方陣"},"XM31":{"name":"方程式與矩陣","desc":"學習利用反方陣解二元一次聯立方程式及複習XM1∼36的矩陣"},"XM41":{"name":"映射1","desc":"認識映射、嵌射、一對一映射，並學習如何求反映射及合成映射"},"XM51":{"name":"映射2","desc":"學習平移變換、鏡射變換、複習XM41∼59的映射"},"XM61":{"name":"線性變換1","desc":"學習線性變換，以及利用2X2階的矩陣來表示映射和各種線性變換"},"XM71":{"name":"線性變換2","desc":"利用學過的線性變換，求直線、曲線、變換後的圖形，以及區域變換後的面積變化"},"XM81":{"name":"線性變換3","desc":"學習合成變換、向量的線性變換，以及利用線性變換的性質求點坐標等及複習XM61∼87的線性變換"},"XP1":{"name":"計數原理","desc":"學習求兩個集合的交集、聯集，以及兩個集合的相乘"},"XP11":{"name":"排列","desc":"學習學習排列的基礎知識，以及認識階乘"},"XP21":{"name":"排列與組合","desc":"利用在XP11∼20所學的知識，學習包含環狀排列及項圈排列在內的排列公式"},"XP31":{"name":"組合","desc":"先學習組合的基本性質，然後再學習重複組合"},"XP41":{"name":"二項式定理","desc":"利用在XP26∼40所學的知識，學習二項式定理及複習XP11∼47的內容"},"XP51":{"name":"機率","desc":"認識機率的基本性質，並求兩個事件的聯集的發生機率"},"XP61":{"name":"條件機率","desc":"學習條件機率的乘法定理，並利用此定理判斷兩個事件是否為獨立事件"},"XP71":{"name":"二項分布","desc":"學習二項分布"},"XP81":{"name":"期望值","desc":"學習隨機變數的期望值及複習XP51∼88的內容"}},"英文":{"5A1":{"name":"覆誦練習1 (寢室)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A11":{"name":"覆誦練習2 (客廳)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A21":{"name":"覆誦練習3 (食物)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A31":{"name":"覆誦練習4 (五官)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A41":{"name":"覆誦練習5 (水果)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A51":{"name":"覆誦練習6 (衣著)","desc":"培養英文的音感並能覆誦;並培養英文的聽讀習慣｡"},"5A61":{"name":"SKIT1:早晨","desc":"以前面學過的字彙;合成一篇小故事來閱讀｡"},"5A71":{"name":"音讀練習1 (運動)","desc":"培養自力音讀的能力;並培養邊寫邊念的習慣｡"},"5A81":{"name":"音讀練習2 (寵物)","desc":"培養自力音讀的能力;並培養邊寫邊念的習慣｡"},"5A91":{"name":"音讀練習3 (動物)","desc":"培養自力音讀的能力;並培養邊寫邊念的習慣｡"},"5A101":{"name":"音讀練習4 (交通工具)","desc":"培養自力音讀的能力;並培養邊寫邊念的習慣｡"},"5A111":{"name":"音讀練習5 (自然)","desc":"培養自力音讀的能力;並培養邊寫邊念的習慣｡"},"5A121":{"name":"SKIT 2:動物園","desc":"以前面學過的字彙;合成一篇小故事來閱讀｡"},"5A131":{"name":"字母練習1 (L、T、I、J)","desc":"學習字母l;t;i;j"},"5A141":{"name":"字母練習2 (F、W、V、R)","desc":"學習字母f;w;v;r"},"5A151":{"name":"字母練習3 (N、H、M、O)","desc":"學習字母n;h;m;x"},"5A161":{"name":"字母練習4 (Y、Z、K、S)","desc":"學習字母y;z;k;s"},"5A171":{"name":"字母練習5 (C、P、E、U、A)","desc":"學習字母c;o;e;u;a"},"5A181":{"name":"字母練習6 (Q、G、D、B、P)","desc":"學習字母q;g;d;b;p"},"5A191":{"name":"SKIT3:去農場","desc":"以前面學過的字彙;合成一篇小故事來閱讀｡"},"4A1":{"name":"單字抄寫練習1 (apple/egg)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A11":{"name":"單字抄寫練習2 (ink/ox/bus)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A21":{"name":"單字抄寫練習3 (bed/cat/dog/fan)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A31":{"name":"單字抄寫練習4 (glass/hen/jam/key)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A41":{"name":"單字抄寫練習5 (lion/milk/net/pool)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A51":{"name":"單字抄寫練習6 (quilt/rabbit/sofa/tiger)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A61":{"name":"單字抄寫練習7 (vest/window/box/yellow/zoo)","desc":"熟習英文形､音､義三者的關係;並學習26個字母為主的一些字彙｡"},"4A71":{"name":"SKIT 1:航海記","desc":"以SKIT複習之前前面學過的字彙｡"},"4A81":{"name":"單字書寫練習1 (bell/glass)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;完成單字的書寫｡"},"4A91":{"name":"單字書寫練習2 (truck/phone)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;完成單字的書寫｡"},"4A101":{"name":"單字書寫練習3 (chair/shoes/father/king)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;完成單字的書寫｡"},"4A111":{"name":"單字書寫練習4 (bread/dress/tree/star)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;完成單字的書寫｡"},"4A121":{"name":"SKIT 2:我的家人","desc":"以SKIT複習之前前面學過的字彙｡"},"4A131":{"name":"單字書寫練習5 (cake/ball/nose)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A141":{"name":"單字書寫練習6 (music/pull/bike)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A151":{"name":"單字書寫練習7 (shirt/car/driver)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A161":{"name":"單字書寫練習8 (nurse/horse/nail)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A171":{"name":"單字書寫練習9 (bee/peach/monkey/play)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A181":{"name":"單字書寫練習10 (cook/classroom/coat/mouth)","desc":"熟習英文形､音､義三者的關係;並能藉著突的輔助;自力完成單字｡"},"4A191":{"name":"SKIT 3:慶生","desc":"以SKIT複習之前前面學過的字彙｡"},"3A1":{"name":"詞組練習1 (a red van/a green van)","desc":"熟習詞組的結構｡(a red van/a green van)"},"3A11":{"name":"詞組練習2 (a big clock/ a small clock)","desc":"熟習詞組的結構｡(a big clock/ a small clock)"},"3A21":{"name":"詞組練習3 (two cars/six bikes)","desc":"熟習詞組的結構｡(two cars/six bikes)"},"3A31":{"name":"詞組練習4 (my ruler/your ruler)","desc":"熟習詞組的結構｡(my ruler/your ruler)"},"3A41":{"name":"SKIT 1:變魔術","desc":"以SKIT複習之前前面學過的字彙｡"},"3A51":{"name":"句子練習1 (I like your toy.)","desc":"熟習I like~的句型｡"},"3A61":{"name":"句子練習2 (I want milk.)","desc":"熟習I want~的句型｡"},"3A71":{"name":"句子練習3 (I play basketball.)","desc":"熟習I play~的句型｡"},"3A81":{"name":"句子練習4 (I have five balls.)","desc":"熟習I have~的句型｡"},"3A91":{"name":"SKIT 2:聊天","desc":"以SKIT複習之前前面學過的字彙｡"},"3A101":{"name":"句子練習5 (I am Tom.)","desc":"熟習I am~的句型｡"},"3A111":{"name":"句子練習6 (I am a student.)","desc":"熟習I am a~的句型｡"},"3A121":{"name":"句子練習7 (We are from Taiwan.)","desc":"熟習We are~的句型｡"},"3A131":{"name":"句子練習8 (We are hungry.)","desc":"熟習We are~的句型｡"},"3A141":{"name":"SKIT 3:自我介紹","desc":"以SKIT複習之前前面學過的字彙｡"},"3A151":{"name":"句子練習9 (This is my father.)","desc":"熟習This is my~的句型｡"},"3A161":{"name":"句子練習10 (Bob plays in the park.)","desc":"熟習Bob plays~的句型｡"},"3A171":{"name":"句子練習11 (The phone is on the table.)","desc":"熟習The~ in ~的句型｡"},"3A181":{"name":"句子練習12 (I sing in the yard.)","desc":"熟習I~ in ~的句型｡"},"3A191":{"name":"SKIT 4:我的家人","desc":"以SKIT複習之前前面學過的字彙｡"},"2A1":{"name":"Completing Phrases1 (a red/a blue+物品)","desc":"熟習詞組的結構｡(a red/a blue+物品)"},"2A11":{"name":"Completing Phrases2 (a green/a yellow+物品)","desc":"熟習詞組的結構｡(a green/a yellow+物品)"},"2A21":{"name":"Completing Phrases3 (a big/a small+物品)","desc":"熟習詞組的結構｡(a big/a small+物品)"},"2A31":{"name":"Completing Phrases4 (a long/a short+物品)","desc":"熟習詞組的結構｡(a long/a short+物品)"},"2A41":{"name":"Skit 1:The Big Game","desc":"以SKIT複習之前前面學過的字彙｡"},"2A51":{"name":"Completing Sentences1 (The+人/物 is running/walking.)","desc":"熟習~ing的句型｡"},"2A61":{"name":"Completing Sentences2 (The+人/物 is sleeping/swimming.)","desc":"熟習~ing的句型｡"},"2A71":{"name":"Completing Sentences3 (The+人/物 is laughing/crying.)","desc":"熟習~ing的句型｡"},"2A81":{"name":"Completing Sentences4 (The+人/物 is jumping/sitting.)","desc":"熟習~ing的句型｡"},"2A91":{"name":"Skit 2:At the Circus","desc":"以SKIT複習之前前面學過的字彙及句型｡"},"2A101":{"name":"Making Sentences1 (The+物 is small/big.)","desc":"熟習The~is~的句型｡"},"2A111":{"name":"Making Sentences2 (The+物 is long/short.)","desc":"熟習The~is~的句型｡"},"2A121":{"name":"Making Sentences3 (The+物 is old/new.)","desc":"熟習The~is~的句型｡"},"2A131":{"name":"Making Sentences4 (The+物 is heavy/light.)","desc":"熟習The~is~的句型｡"},"2A141":{"name":"Skit 3:The Jungle Adventure","desc":"以SKIT複習之前前面學過的字彙及句型｡"},"2A151":{"name":"Making Sentences5 (The+物品 is in the+地方.)","desc":"熟習The~is~的句型｡"},"2A161":{"name":"Making Sentences6 (The+物品 is on/under the +地方.)","desc":"熟習The~is~的句型｡"},"2A171":{"name":"Making Sentences7 (~is eating/drinking+食物/飲料.)","desc":"熟習The~is~的句型｡"},"2A181":{"name":"Making Sentences8 (~ is reading/cleaning+物品.)","desc":"熟習The~is~的句型｡"},"2A191":{"name":"Skit 4:The Plane","desc":"以SKIT複習之前前面學過的字彙及句型｡"},"A1":{"name":"Introducing Oneself1 (打招呼)","desc":"學習有關自我介紹的日常生活用語｡"},"A11":{"name":"Introducing Oneself2 (問職業)","desc":"學習有關自我介紹的日常生活用語｡"},"A21":{"name":"Introducing Oneself3 (問年齡)","desc":"學習有關自我介紹的日常生活用語｡"},"A31":{"name":"Introducing Oneself4 (問國籍)","desc":"學習有關自我介紹的日常生活用語｡"},"A41":{"name":"Story 1:The First Day of School","desc":"以STORY複習之前前面學過的字彙及句型｡"},"A51":{"name":"Describing People1 (描述人物之間的關係)","desc":"學習有關描述人物的日常生活用語｡"},"A61":{"name":"Describing People2 (描述他人年齡)","desc":"學習有關描述人物的日常生活用語｡"},"A71":{"name":"Describing People3 (描述他人職業)","desc":"學習有關描述人物的日常生活用語｡"},"A81":{"name":"Describing People4 (描述他人狀態)","desc":"學習有關描述人物的日常生活用語｡"},"A91":{"name":"Story 2:Who's That?","desc":"以STORY複習之前前面學過的字彙及句型｡"},"A101":{"name":"Complimenting1 (讚美)","desc":"學習有關表達讚美的日常生活用語｡"},"A111":{"name":"Complimenting2 (讚美)","desc":"學習有關表達讚美的日常生活用語｡"},"A121":{"name":"Complimenting3 (讚美)","desc":"學習有關表達讚美的日常生活用語｡"},"A131":{"name":"Complimenting4 (讚美)","desc":"學習有關表達讚美的日常生活用語｡"},"A141":{"name":"Story 3:Kim's House","desc":"以STORY複習之前前面學過的字彙及句型｡"},"A151":{"name":"Expressing Wants1 (表達需求)","desc":"學習有關表達需求的日常生活用語｡"},"A161":{"name":"Expressing Wants2 (表達需求)","desc":"學習有關表達需求的日常生活用語｡"},"A171":{"name":"Expressing Wants3 (詢問需求)","desc":"學習有關表達需求的日常生活用語｡"},"A181":{"name":"Expressing Wants4 (詢問需求)","desc":"學習有關表達需求的日常生活用語｡"},"A191":{"name":"Story 4:A Family Party","desc":"以STORY複習之前前面學過的字彙及句型｡"},"B1":{"name":"Commands1 (命令)","desc":"學習有關命令的日常生活用語｡"},"B11":{"name":"Commands2 (命令他人)","desc":"學習有關命令的日常生活用語｡"},"B21":{"name":"Preferences1 (表達喜好)","desc":"學習有關喜好的日常生活用語｡"},"B31":{"name":"Preferences2 (詢問喜好)","desc":"學習有關喜好的日常生活用語｡"},"B41":{"name":"Story 1:Career Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"B51":{"name":"Suggestion1 (建議)","desc":"學習有關建議的日常生活用語｡"},"B61":{"name":"Suggestion2 (建議他人)","desc":"學習有關建議的日常生活用語｡"},"B71":{"name":"Refusing1 (拒絕他人)","desc":"學習有關拒絕的日常生活用語｡"},"B81":{"name":"Refusing2 (拒絕他人)","desc":"學習有關拒絕的日常生活用語｡"},"B91":{"name":"Story 2:Career Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"B101":{"name":"Abilities1 (表達能力)","desc":"學習有關能力的日常生活用語｡"},"B111":{"name":"Abilities2 (詢問能力)","desc":"學習有關能力的日常生活用語｡"},"B121":{"name":"Possessions1 (表達擁有)","desc":"學習有關表達擁有的日常生活用語｡"},"B131":{"name":"Possessions2 (詢問擁有的事物)","desc":"學習有關表達擁有的日常生活用語｡"},"B141":{"name":"Story 3:Career Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"B151":{"name":"Talking about Time1 (星期)","desc":"學習有關談論時間的日常生活用語｡"},"B161":{"name":"Talking about Time2 (月份)","desc":"學習有關談論時間的日常生活用語｡"},"B171":{"name":"Talking about Time3 (幾點鐘)","desc":"學習有關談論時間的日常生活用語｡"},"B181":{"name":"Talking about Time4 (幾點鐘)","desc":"學習有關談論時間的日常生活用語｡"},"B191":{"name":"Story 4:Career Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"C1":{"name":"Warning1 (警告)","desc":"學習有關警告的日常生活用語｡"},"C11":{"name":"Warning2 (勸告)","desc":"學習有關警告的日常生活用語｡"},"C21":{"name":"Requesting 2 (要求)","desc":"學習有關請求的日常生活用語｡"},"C31":{"name":"Requesting 2 (請求)","desc":"學習有關請求的日常生活用語｡"},"C41":{"name":"Story 1:Twins","desc":"以STORY複習之前前面學過的字彙及句型｡"},"C51":{"name":"Weather1 (詢問天氣)","desc":"學習有關天氣的日常生活用語｡"},"C61":{"name":"Weather2 (描述天氣)","desc":"學習有關天氣的日常生活用語｡"},"C71":{"name":"Talking about One's Condition1 (詢問他人狀態)","desc":"學習有關談論身體狀況的日常生活用語｡"},"C81":{"name":"Talking about One's Condition2 (詢問他人狀態)","desc":"學習有關談論身體狀況的日常生活用語｡"},"C91":{"name":"Story 2:Our Hiking Trip","desc":"以STORY複習之前前面學過的字彙及句型｡"},"C101":{"name":"Comparing (表達讚美)","desc":"學習有關比較的日常生活用語｡"},"C111":{"name":"Talking about Location1 (物體方位)","desc":"學習有關談論位置的日常生活用語｡"},"C121":{"name":"Talking about Location2 (地點方位)","desc":"學習有關談論位置的日常生活用語｡"},"C131":{"name":"Talking about Location3 (人物方位)","desc":"學習有關談論位置的日常生活用語｡"},"C141":{"name":"Story 3:Let's Go Swimming","desc":"以STORY複習之前前面學過的字彙及句型｡"},"C151":{"name":"Asking about Pastimes1 (詢問嗜好)","desc":"學習有關談論休閒活動的日常生活用語｡"},"C161":{"name":"Asking about Pastimes2 (詢問嗜好+時間)","desc":"學習有關談論休閒活動的日常生活用語｡"},"C171":{"name":"Asking about Habbits1 (詢問休閒)","desc":"學習有關談論習慣的日常生活用語｡"},"C181":{"name":"Asking about Habbits2 (詢問習慣)","desc":"學習有關談論習慣的日常生活用語｡"},"C191":{"name":"Story 4:Career Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"D1":{"name":"SVC1 (I am Scott.)","desc":"主詞＋動詞＋補語 (I am Scott.)的句型練習｡"},"D11":{"name":"SVC2 (We are busy.)","desc":"主詞＋動詞＋補語 (We are busy.)的句型練習｡"},"D21":{"name":"SVC3 (She is a doctor.)","desc":"主詞＋動詞＋補語(She is a doctor.)的句型練習｡"},"D31":{"name":"SVC4 (This is her guitar.)","desc":"主詞＋動詞＋補語 (This is her guitar.)的句型練習｡"},"D41":{"name":"Story 1:Scott's Zoo","desc":"以STORY複習之前前面學過的字彙及句型｡"},"D51":{"name":"SVC5 (Mike is absent.)","desc":"主詞＋動詞＋補語(Mike is absent.)的句型練習｡"},"D61":{"name":"SVC6 (It is sunny.)","desc":"主詞＋動詞＋補語(It is sunny.)的句型練習｡"},"D71":{"name":"SVC7 (I am not hungry.)","desc":"主詞＋動詞＋補語(I am not hungry.)的句型練習｡"},"D81":{"name":"SVC8 (Are you busy?)","desc":"主詞＋動詞＋補語(Are you busy?)的句型練習｡"},"D91":{"name":"Story 2: Our Family","desc":"以STORY複習之前前面學過的字彙及句型｡"},"D101":{"name":"SVO1 (I have two brothers.)","desc":"主詞＋動詞＋受詞(I have two brothers.)的句型練習｡"},"D111":{"name":"SVO2 (I like math.)","desc":"主詞＋動詞＋受詞(I like math.)的句型練習｡"},"D121":{"name":"SVO3 (I read novels.)","desc":"主詞＋動詞＋受詞(I read novels.)的句型練習｡"},"D131":{"name":"SVO4 (He likes math.)","desc":"主詞＋動詞＋受詞(He likes math.)的句型練習｡"},"D141":{"name":"Story 3:Soccer Friends","desc":"以STORY複習之前前面學過的字彙及句型｡"},"D151":{"name":"SVO5 (We like to play soccer.)","desc":"主詞＋動詞＋受詞(We like to play soccer.)的句型練習｡"},"D161":{"name":"SVO6 (I want to buy a new cell phone.)","desc":"主詞＋動詞＋受詞(I want to buy a new cell phone.)的句型練習｡"},"D171":{"name":"SVO7 (I don't like coffee.)","desc":"主詞＋動詞＋受詞(I don't like coffee.)的句型練習｡"},"D181":{"name":"SVO8 (Do you have any sons?)","desc":"主詞＋動詞＋受詞(Do you have any sons?)的句型練習｡"},"D191":{"name":"Story 4 : Let's Play Baseball!","desc":"以STORY複習之前前面學過的字彙及句型｡"},"E1":{"name":"SVM1 (I am in New York.)","desc":"主詞＋動詞＋修飾語(I am in New York.)的句型練習｡"},"E11":{"name":"SVM2 (I was at the restaurant.)","desc":"主詞＋動詞＋修飾語(I was at the restaurant.)的句型練習｡"},"E21":{"name":"SVM3 (It is next to the station.)","desc":"主詞＋動詞＋修飾語(It is next to the station.)的句型練習｡"},"E31":{"name":"SVM4 (He was not at the library.)","desc":"主詞＋動詞＋修飾語(He was not at the library.)的句型練習｡"},"E41":{"name":"Story 1: Footprints","desc":"以STORY複習之前前面學過的字彙及句型｡"},"E51":{"name":"SVM5 (I live in Toronto.)","desc":"主詞＋動詞＋修飾語(I live in Toronto.)的句型練習｡"},"E61":{"name":"SVM6 (I played in my room.)","desc":"主詞＋動詞＋修飾語(I played in my room.)的句型練習｡"},"E71":{"name":"SVM7 (We went to Australia.)","desc":"主詞＋動詞＋修飾語(We went to Australia.)的句型練習｡"},"E81":{"name":"SVM8 (I didn't go to the pool this afternoon.)","desc":"主詞＋動詞＋修飾語(I didn't go to the pool this afternoon.)的句型練習｡"},"E91":{"name":"Story 2:Meg's Dream","desc":"以STORY複習之前前面學過的字彙及句型｡"},"E101":{"name":"SVCM1 (I am busy today.)","desc":"主詞＋動詞＋補語＋修飾語(I am busy today.)的句型練習｡"},"E111":{"name":"SVCM2 (I was busy yesterday.)","desc":"主詞＋動詞＋補語＋修飾語(I was busy yesterday.)的句型練習｡"},"E121":{"name":"SVCM3 (I am taller than him.)","desc":"主詞＋動詞＋補語＋修飾語(I am taller than him.)的句型練習｡"},"E131":{"name":"SVCM4 (It is more comfortable than ours.)","desc":"主詞＋動詞＋補語＋修飾語(It is more comfortable than ours.)的句型練習｡"},"E141":{"name":"Story 3:Fun at the Zoo","desc":"以STORY複習之前前面學過的字彙及句型｡"},"E151":{"name":"SVOM1 (I practice tennis every day.)","desc":"主詞＋動詞＋受詞＋修飾語(I practice tennis every day.)的句型練習｡"},"E161":{"name":"SVOM2 (I bought a gift for Mom.)","desc":"主詞＋動詞＋受詞＋修飾語(I bought a gift for Mom.)的句型練習｡"},"E171":{"name":"SVOM3 (I enjoyed traveling in Canada.)","desc":"主詞＋動詞＋受詞＋修飾語(I enjoyed traveling in Canada.)的句型練習｡"},"E181":{"name":"SVOM4 (I like oranges better than apples.)","desc":"主詞＋動詞＋受詞＋修飾語(I like oranges better than apples.)的句型練習｡"},"E191":{"name":"Story 4:My Favorite Present","desc":"以STORY複習之前前面學過的字彙及句型｡"},"F1":{"name":"Subject + Predicate1 (I can speak Thai.)","desc":"主詞＋述語(I can speak Thai.)的句型練習｡"},"F11":{"name":"Subject + Predicate2 (I cannot read English.)","desc":"主詞＋述語(I cannot read English.))的句型練習｡"},"F21":{"name":"Subject + Predicate3 (I will arrive at six o'clock.)","desc":"主詞＋述語(I will arrive at six o'clock.)的句型練習｡"},"F31":{"name":"Subject + Predicate4 (I must finish my report.)","desc":"主詞＋述語(I must finish my report.)的句型練習｡"},"F41":{"name":"Story 1: The Big Mission","desc":"以STORY複習之前前面學過的字彙及句型｡"},"F51":{"name":"Subject + Predicate5 (You should buy this bag.)","desc":"主詞＋述語(You should buy this bag.)的句型練習｡"},"F61":{"name":"Subject + Predicate6 (I am watching TV.)","desc":"主詞＋述語(I am watching TV.)的句型練習｡"},"F71":{"name":"Subject + Predicate7 (I am not watching TV.)","desc":"主詞＋述語(I am not watching TV.)的句型練習｡"},"F81":{"name":"Subject + Predicate8 (I am going to wear my suit.)","desc":"主詞＋述語(I am going to wear my suit.)的句型練習｡"},"F91":{"name":"Story 2: Sick Day","desc":"以STORY複習之前前面學過的字彙及句型｡"},"F101":{"name":"Subject + Predicate9 (I have to go to the hospital.)","desc":"主詞＋述語(I have to go to the hospital.)的句型練習｡"},"F111":{"name":"Subject + Predicate10 (You don't have to wash the dishes.)","desc":"主詞＋述語(You don't have to wash the dishes.)的句型練習｡"},"F121":{"name":"Subject + Predicate11 (I am interested in painting.)","desc":"主詞＋述語(I am interested in painting.)的句型練習｡"},"F131":{"name":"Subject + Predicate12 (He is good at skating.)","desc":"主詞＋述語(He is good at skating.)的句型練習｡"},"F141":{"name":"Story 3:Australian Vacation","desc":"以STORY複習之前前面學過的字彙及句型｡"},"F151":{"name":"Interrogative1 (Can you pass me the salt  please.)","desc":"疑問句句型的練習｡"},"F161":{"name":"Interrogative2 (What is your favorite animal?)","desc":"疑問句句型的練習｡"},"F171":{"name":"Interrogative3 (Where is the post office?)","desc":"疑問句句型的練習｡"},"F181":{"name":"Interrogative4 (Which is longer  this one or that one?)","desc":"疑問句句型的練習｡"},"F191":{"name":"Story 4: Our New TV","desc":"以STORY複習之前前面學過的字彙及句型｡"},"G1":{"name":"Nouns 1 (單複數)","desc":"可數名詞和不可數名詞"},"G11":{"name":"Nouns 2 (人稱代名詞)","desc":"人稱代名詞"},"G21":{"name":"Verbs 1 (Be動詞和一般動詞肯定句、第三人稱單數)","desc":"Be動詞和一般動詞肯定句、第三人稱單數"},"G31":{"name":"Verbs 2 (動詞和一般動詞否定句)","desc":"動詞和一般動詞否定句"},"G41":{"name":"Story 1: The Fox and Crow","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"G51":{"name":"Verbs 3 (Be動詞和一般動詞疑問句，any)","desc":"Be動詞和一般動詞疑問句，any"},"G61":{"name":"Verbs 4 (Be動詞過去式)","desc":"Be動詞過去式"},"G71":{"name":"Verbs 5 (一般動詞過去式、及物動詞與不及物動詞)","desc":"一般動詞過去式、及物動詞與不及物動詞"},"G81":{"name":"Verbs 6 (不規則動詞過去式、動詞詞組、直接/間接受詞)","desc":"不規則動詞過去式、動詞詞組、直接/間接受詞"},"G91":{"name":"Story 2: The King's New Clothes","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"G101":{"name":"Verbs 7 (Be動詞和一般動詞過去式的疑問句和否定句)","desc":"Be動詞和一般動詞過去式的疑問句和否定句"},"G111":{"name":"Verbs 8 特殊疑問句(以W為開頭的疑問句)","desc":"特殊疑問句（以W為開頭的疑問句）"},"G121":{"name":"Verbs 9 (現在/過去進行式之肯定、否定、疑問)","desc":"現在/過去進行式之肯定、否定、疑問"},"G131":{"name":"Verbs 10 使役動詞（let、make），感官動詞（see、hear、feel）","desc":"使役動詞（let、make），感官動詞（see、hear、feel）"},"G141":{"name":"Story 3: Alice in Wonderland","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"G151":{"name":"Auxiliary Verbs1 will(表將來)、must(表必須)、should(表勸告)、might(表現在/將來的可能性)、could(表過去的能力)、will（表將來）、must（表必須）、should（表勸告）、might（表現在/將來的可能性）、could（表過去的能力）","desc":"否定句和疑問句"},"G161":{"name":"Auxiliary Verbs 2 will（表現在的決定）、can（表可\n能性）、should（表高度的可能性）、will（表現在的決定）、can（表可能性）、should（表高度的可能性）","desc":"否定句和疑問句"},"G171":{"name":"Adjectives and Adverbs 1 (形容詞/副詞的比較級)","desc":"形容詞/副詞的比較級"},"G181":{"name":"Adjectives and Adverbs 2 (形容詞的最高級、as＋形容詞/副詞＋as...)","desc":"形容詞的最高級、as＋形容詞/副詞＋as..."},"G191":{"name":"Story 4: Bats","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"H1":{"name":"Phrases 1 (動名詞)","desc":"動名詞"},"H11":{"name":"Phrases 2 (具有名詞作用的不定詞)","desc":"具有名詞作用的不定詞"},"H21":{"name":"Phrases 3 (具有形容詞作用的不定詞)","desc":"具有形容詞作用的不定詞"},"H31":{"name":"Phrases 4 (具有副詞作用的不定詞)","desc":"具有副詞作用的不定詞"},"H41":{"name":"Story 1: Gulliver's Travels","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"H51":{"name":"Phrases 5 (tell/ask＋受詞＋不定詞，wh-疑問詞＋不定詞)","desc":"tell/ask＋受詞＋不定詞，wh-疑問詞＋不定詞"},"H61":{"name":"Phrases 6 (too...to-，enough to-，It is...to-)","desc":"too...to-，enough to-，It is...to-"},"H71":{"name":"Voice 1 (被動語態：基本結構)","desc":"被動語態：基本結構"},"H81":{"name":"Voice 2 (被動語態：主詞＋動詞＋受詞＋受詞型式的句子、否定和疑問句)","desc":"被動語態：主詞＋動詞＋受詞＋受詞型式的句子、否定和疑問句"},"H91":{"name":"Story 2: Thomas Edison","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"H101":{"name":"Voice 3 (have＋受詞過去分詞，帶有助動詞的被動句)","desc":"have＋受詞過去分詞，帶有助動詞的被動句"},"H111":{"name":"Voice 4 (修飾名詞的過去分詞和現在分詞)","desc":"修飾名詞的過去分詞和現在分詞"},"H121":{"name":"Tense 1 (Will和be going to表示未來式)","desc":"Will和be going to表示未來式"},"H131":{"name":"Tense 2 (現在完成式：已經完成的動作、否定句、疑問句)","desc":"現在完成式：已經完成的動作、否定句、疑問句"},"H141":{"name":"Story 3: Jack and the Beanstalk","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"H151":{"name":"Tense 3 (現在完成式:重複的動作)","desc":"現在完成式：重複的動作"},"H161":{"name":"Tense 4 (現在完成式:持續到現在的情況。現在完成進行式:持續到現在的動作)","desc":"現在完成式：持續到現在的情況。現在完成進行式：持續到現在的動作"},"H171":{"name":"Tense 5 (現在完成式:各種疑問句)","desc":"現在完成式：各種疑問句"},"H181":{"name":"Tense 6 (過去完成式、未來完成式)","desc":"過去完成式、未來完成式"},"H191":{"name":"Story 4: Peter Pan","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"I1":{"name":"Clauses 1 (關係代名詞who)","desc":"關係代名詞who"},"I11":{"name":"Clauses 2 (關係代名詞which和that)","desc":"關係代名詞which和that"},"I21":{"name":"Clauses 3 (關係代名詞的省略、關係代名詞whose和what)","desc":"關係代名詞的省略、關係代名詞whose和what"},"I31":{"name":"Clauses 4 (關係副詞when、where、why)","desc":"關係副詞when、where、why"},"I41":{"name":"Story 1: The Wizard of Oz","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"I51":{"name":"Clauses 5 (條件句:if 和 when)","desc":"條件句：if 和 when"},"I61":{"name":"Clauses 6 (條件句:if I had.../ if I were...)","desc":"條件句：if I had.../ if I were..."},"I71":{"name":"Clauses 7 (條件句:if you had asked...)","desc":"條件句：if you had asked..."},"I81":{"name":"Clauses 8 (條件句:I wish.../ if only.../ as if.../ without.../ Had I...)","desc":"條件句：I wish.../ if only.../ as if.../ without.../ Had I..."},"I91":{"name":"Story 2: The Town Mouse and the Country Mouse","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"I101":{"name":"Connecting Ideas 1 (when、before、after)","desc":"when、before、after"},"I111":{"name":"Connecting Ideas 2 (as、while、until)","desc":"as、while、until"},"I121":{"name":"Connecting Ideas 3 (because、since、as、though、even though)","desc":"because、since、as、though、even though"},"I131":{"name":"Connecting Ideas 4 (even if、unless、either...or、neither...nor)","desc":"even if、unless、either...or、neither...nor"},"I141":{"name":"Story 3: The Adventures of Tom Sawyer","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"I151":{"name":"Connecting Ideas 5 (so...that、such...that、so that...、so...)","desc":"so...that、such...that、so that...、so..."},"I161":{"name":"Connecting Ideas 6 (含有that、if、whether...or not的名詞性子句)","desc":"含有that、if、whether...or not的名詞性子句"},"I171":{"name":"Connecting Ideas 7 (含有who、where、what、why的名詞性子句)","desc":"含有who、where、what、why的名詞性子句"},"I181":{"name":"Connecting Ideas 8 (間接敘述)","desc":"間接敘述"},"I191":{"name":"Story 4: Tour of London","desc":"以STORY閱讀複習之前前面學過的文法及句型｡"},"J1":{"name":"Legend of Britain","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J11":{"name":"Pinocchio 1","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J21":{"name":"Pinocchio 2","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J31":{"name":"Captain Cook","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J41":{"name":"Where does Money Come From?","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J51":{"name":"The Story of Tea","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J61":{"name":"Ocean Animals","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J71":{"name":"The Wonderful Wizard of Oz 1","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J81":{"name":"The Wonderful Wizard of Oz 2","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J91":{"name":"The Wonderful Wizard of Oz 3","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J101":{"name":"History of Chocolate","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J111":{"name":"Dreaming of Flight","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J121":{"name":"The Prince and the Pauper 1","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J131":{"name":"The Prince and the Pauper 2","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J141":{"name":"The Prince and the Pauper 3","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J151":{"name":"New York 1","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J161":{"name":"New York 2","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J171":{"name":"Treasure Island 1","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J181":{"name":"Treasure Island 2","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"J191":{"name":"Treasure Island 3","desc":"閱讀並理解500～600字的文章，從文章學習新的單詞、表達方法跟語法要素，提升閱讀理解能力。"},"K1":{"name":"The Olympic Games","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K11":{"name":"Australia","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K21":{"name":"Tom Brown's Schooldays 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K31":{"name":"Tom Brown's Schooldays 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K41":{"name":"Tom Brown's Schooldays 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K51":{"name":"A world of Spices","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K61":{"name":"Endangered Species","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K71":{"name":"Rip Van Winkle 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K81":{"name":"Rip Van Winkle 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K91":{"name":"Rip Van Winkle 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K101":{"name":"The original The Story of Doctor Dolittle 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K111":{"name":"The original The Story of Doctor Dolittle 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K121":{"name":"Heidi 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K131":{"name":"Heidi 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K141":{"name":"Heidi 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K151":{"name":"Helen Keller 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K161":{"name":"Helen Keller 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K171":{"name":"The original The Witches 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K181":{"name":"The original The Witches 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"K191":{"name":"The original The Witches 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L1":{"name":"The Gift of the Magi 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L11":{"name":"The Gift of the Magi 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L21":{"name":"The Phoenix and the Carpet 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L31":{"name":"The Phoenix and the Carpet 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L41":{"name":"The Phoenix and the Carpet 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L51":{"name":"The original The ABC's of Courage 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L61":{"name":"The original The ABC's of Courage 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L71":{"name":"The original The ABC's of Courage 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L81":{"name":"Gandhi 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L91":{"name":"Gandhi 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L101":{"name":"Around the World in Eighty Days 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L111":{"name":"Around the World in Eighty Days 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L121":{"name":"Around the World in Eighty Days 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L131":{"name":"Around the World in Eighty Days 4","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L141":{"name":"The original Friends Who Met on the Street 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L151":{"name":"The original Friends Who Met on the Street 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L161":{"name":"Oliver Twist 1","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L171":{"name":"Oliver Twist 2","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L181":{"name":"Oliver Twist 3","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"L191":{"name":"Oliver Twist 4","desc":"閱讀並理解600～800字的文章，提升閱讀理解能力，從文章當中包含新的單詞、表達方法跟語法要素。"},"M1":{"name":"The story of Jazz","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M11":{"name":"The toothpaste Millionaire 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M21":{"name":"The toothpaste Millionaire 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M31":{"name":"The toothpaste Millionaire 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M41":{"name":"The toothpaste Millionaire 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M51":{"name":"Black Beauty 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M61":{"name":"Black Beauty 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M71":{"name":"Black Beauty 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M81":{"name":"The Pyramids of Giza 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M91":{"name":"The Pyramids of Giza 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M101":{"name":"Matilda 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M111":{"name":"Matilda 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M121":{"name":"Matilda 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M131":{"name":"Matilda 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M141":{"name":"A Colorful Idea","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M151":{"name":"Canada 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M161":{"name":"Canada 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M171":{"name":"The Diary of Young Girl 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M181":{"name":"The Diary of Young Girl 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"M191":{"name":"The Diary of Young Girl 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1100   字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N1":{"name":"The original Goal! 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N11":{"name":"The original Goal! 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N21":{"name":"The original Goal! 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N31":{"name":"The original Goal! 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N41":{"name":"Pollution and the Environment 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N51":{"name":"Pollution and the Environment 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N61":{"name":"The original Thunderwith 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N71":{"name":"The original Thunderwith 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N81":{"name":"The original Thunderwith 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N91":{"name":"The original Thunderwith 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N101":{"name":"Leonardo Da Vinci 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N111":{"name":"Leonardo Da Vinci 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N121":{"name":"Leonardo Da Vinci 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N131":{"name":"The original Watership Down 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N141":{"name":"The original Watership Down 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N151":{"name":"The original Watership Down 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N161":{"name":"The original Watership Down 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N171":{"name":"The original The Story of My Life 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N181":{"name":"The original The Story of My Life 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"N191":{"name":"The original The Story of My Life 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1000～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O1":{"name":"The original A Retrieved Reformation 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O11":{"name":"The original A Retrieved Reformation 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O21":{"name":"The original Of Human Bondage 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O31":{"name":"The original Of Human Bondage 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O41":{"name":"The original Of Human Bondage 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O51":{"name":"The original A Fish Caught In Time 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O61":{"name":"The original A Fish Caught In Time 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O71":{"name":"The original A Fish Caught In Time 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O81":{"name":"The original A Fish Caught In Time 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O91":{"name":"The original Benjamin Button 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O101":{"name":"The original Benjamin Button 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O111":{"name":"The original Benjamin Button 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O121":{"name":"The original The Invisible Man 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O131":{"name":"The original The Invisible Man 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O141":{"name":"The original The Invisible Man 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O151":{"name":"The original The Invisible Man 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O161":{"name":"The original Great Expectations 1","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O171":{"name":"The original Great Expectations 2","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O181":{"name":"The original Great Expectations 3","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"},"O191":{"name":"The original Great Expectations 4","desc":"1.透過閱讀各種題材的原著文章，讓學生擴充詞彙量。\n2.透過學習約1100～1200字的故事與文章（10張），進一步提升學生的閱讀理解能力。"}},"國語":{"7A1":{"name":"國字卡①","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A11":{"name":"國字卡②","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A21":{"name":"國字卡③","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A31":{"name":"語詞①","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A41":{"name":"語詞②","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A51":{"name":"語詞③","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A61":{"name":"語詞④","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A71":{"name":"語詞⑤","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A81":{"name":"語詞⑥","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A91":{"name":"語詞⑦","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A101":{"name":"語詞⑧","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A111":{"name":"語詞⑨","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A121":{"name":"語詞⑩","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A131":{"name":"語詞⑪","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A141":{"name":"語詞⑫","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A151":{"name":"語詞⑬","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A161":{"name":"語詞與小故事①","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A171":{"name":"語詞與小故事②","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A181":{"name":"語詞與小故事③","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"7A191":{"name":"語詞與小故事④","desc":"借助點讀筆，認識語詞、養成良好的聽讀習慣"},"6A1":{"name":"短語①","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A11":{"name":"短語②","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A21":{"name":"短語③","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A31":{"name":"短語④","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A41":{"name":"短語⑤","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A51":{"name":"短語⑥","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A61":{"name":"短語⑦","desc":"借助點讀筆，認讀二個成分的短語（動詞+名詞）。"},"6A71":{"name":"短語⑧","desc":"借助點讀筆，認讀二個成分的短語（形容詞+名詞）。"},"6A81":{"name":"短語⑨","desc":"借助點讀筆，認讀二個成分的短語（形容詞+名詞）。"},"6A91":{"name":"短語⑩","desc":"借助點讀筆，認讀二個成分的短語（名詞+名詞）。"},"6A101":{"name":"短句①","desc":"借助點讀筆，認讀2～3個成分的短句（名詞+形容詞）。"},"6A111":{"name":"短句②","desc":"借助點讀筆，認讀2～3個成分的短句（主語+在+形容詞）。"},"6A121":{"name":"短句③","desc":"借助點讀筆，認讀2～3個成分的短句（主語+謂語+了）。"},"6A131":{"name":"短句④","desc":"借助點讀筆，認讀2～3個成分的短句（主語+動詞+補語）。"},"6A141":{"name":"短句⑤","desc":"借助點讀筆，認讀2～3個成分的短句（主語+是、在+賓語）。"},"6A151":{"name":"短句⑥","desc":"借助點讀筆，認讀2～3個成分的短句（主語+謂語+賓語）。"},"6A161":{"name":"短句⑦","desc":"借助點讀筆，認讀2～3個成分的短句（主語+在+賓語）。"},"6A171":{"name":"短句與小故事①","desc":"借助點讀筆"},"6A181":{"name":"短句與小故事②","desc":"借助點讀筆"},"6A191":{"name":"短句與小故事③","desc":"借助點讀筆"},"5A1":{"name":"注音符號①","desc":"認讀並描寫37個注音符號"},"5A11":{"name":"注音符號②","desc":"認讀並描寫37個注音符號"},"5A21":{"name":"注音符號③","desc":"認讀並描寫37個注音符號"},"5A31":{"name":"注音符號④","desc":"認讀並描寫37個注音符號"},"5A41":{"name":"注音符號⑤","desc":"認讀並描寫37個注音符號"},"5A51":{"name":"結合韻與聲調①","desc":"認讀並描寫20個結合韻及熟悉聲調"},"5A61":{"name":"結合韻與聲調②","desc":"認讀並描寫20個結合韻及熟悉聲調"},"5A71":{"name":"拼音練習①","desc":"練習拼音。抄寫聲符、描寫韻符。"},"5A81":{"name":"拼音練習②","desc":"練習拼音。抄寫聲符、描寫韻符。"},"5A91":{"name":"拼音練習③","desc":"練習拼音。抄寫聲符、描寫韻符。"},"5A101":{"name":"短句和長句①","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A111":{"name":"短句和長句②","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A121":{"name":"短句和長句③","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A131":{"name":"短句和長句④","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A141":{"name":"短句和長句⑤","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A151":{"name":"短句和長句⑥","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A161":{"name":"短句和長句⑦","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A171":{"name":"短句和長句⑧","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A181":{"name":"短句和長句⑨","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"5A191":{"name":"短句和長句⑩","desc":"音讀3～4個句子成分的句子，提高拼音能力、抄寫音節。"},"4A1":{"name":"拼寫語詞①","desc":"複習37個注音符號並拼寫語詞。"},"4A11":{"name":"拼寫語詞②","desc":"複習結合韻並拼寫語詞。"},"4A21":{"name":"拼寫語詞③","desc":"形、音容易混淆的注音符號綜合練習。"},"4A31":{"name":"拼寫語詞④","desc":"形、音容易混淆的注音符號綜合練習。"},"4A41":{"name":"拼寫語詞⑤","desc":"形、音容易混淆的結合韻綜合練習。"},"4A51":{"name":"4A的國字①","desc":"描寫、抄寫國字：一、二、三、工、上、下、十、土、王、木"},"4A61":{"name":"名詞和句子①","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A71":{"name":"名詞和句子②","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A81":{"name":"名詞和句子③","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A91":{"name":"名詞和句子④","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A101":{"name":"名詞和句子⑤","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A111":{"name":"名詞和句子⑥","desc":"音讀名詞為主的句子﹐提高名詞詞彙量；描寫、抄寫名詞詞彙"},"4A121":{"name":"4A的國字②","desc":"描寫、抄寫國字：八、人、入、文、父、心、爪、瓜、竹、門"},"4A131":{"name":"動詞和句子①","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A141":{"name":"動詞和句子②","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A151":{"name":"動詞和句子③","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A161":{"name":"形容詞和句子①","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A171":{"name":"形容詞和句子②","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A181":{"name":"形容詞和句子③","desc":"音讀動詞為主的句子﹐提高動詞詞彙量；抄寫動詞詞彙"},"4A191":{"name":"4A的國字③","desc":"描寫、抄寫國字：口、日、四、西、巾、肉、月、風、中、車"},"3A1":{"name":"誰、什麼①","desc":"透過一問兩答的形式，理解針對主語(陳述對象)和賓語(處置對象)提問的各類問句和相對應的答句。充實名詞詞彙(含節假日等抽象名詞)和方位詞。"},"3A11":{"name":"誰、什麼②","desc":"透過一問兩答的形式，理解針對主語(陳述對象)和賓語(處置對象)提問的各類問句和相對應的答句。充實名詞詞彙(含節假日等抽象名詞)和方位詞。"},"3A21":{"name":"誰、什麼③","desc":"透過一問兩答的形式，理解針對主語(陳述對象)和賓語(處置對象)提問的各類問句和相對應的答句。充實名詞詞彙(含節假日等抽象名詞)和方位詞。"},"3A31":{"name":"誰、什麼④","desc":"透過一問兩答的形式，理解針對主語(陳述對象)和賓語(處置對象)提問的各類問句和相對應的答句。充實名詞詞彙(含節假日等抽象名詞)和方位詞。"},"3A41":{"name":"誰、什麼⑤","desc":"透過一問兩答的形式，理解針對主語(陳述對象)和賓語(處置對象)提問的各類問句和相對應的答句。充實名詞詞彙(含節假日等抽象名詞)和方位詞。"},"3A51":{"name":"3A的國字①","desc":"描寫、抄寫國字：小、山、光、水、雨、絲、火、米、夾、傘"},"3A61":{"name":"怎麼樣、做什麼①","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A71":{"name":"怎麼樣、做什麼②","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A81":{"name":"怎麼樣、做什麼③","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A91":{"name":"怎麼樣、做什麼④","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A101":{"name":"怎麼樣、做什麼⑤","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A111":{"name":"怎麼樣、做什麼⑥","desc":"透過兩組一問的問答句，理解針對謂語(陳述內容)的各類問句和相對應的答句(含被字句、把字句)。充實動詞、形容詞詞彙和學習各類副詞、助詞等。"},"3A121":{"name":"3A的國字②","desc":"描寫、抄寫國字：刀、勺、方、司、包、石、布、尺、尾、店"},"3A131":{"name":"何時、何地①","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A141":{"name":"何時、何地②","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A151":{"name":"何時、何地③","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A161":{"name":"何時、何地④","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A171":{"name":"何時、何地⑤","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A181":{"name":"何時、何地⑥","desc":"透過一問三答的形式，理解針對狀語、補語等提問的各類問句和相對應的答句(含強調句、雙賓語句、兼語句、比較句)。充實數量詞、時間名詞、方位詞、介詞等。"},"3A191":{"name":"3A的國字③","desc":"描寫、抄寫國字：子、女、母、海、船、比、地、走、足、步"},"2A1":{"name":"讀故事選插圖①","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確插圖。"},"2A11":{"name":"讀故事選插圖②","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確插圖。"},"2A21":{"name":"讀故事選插圖③","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確插圖。"},"2A31":{"name":"讀故事選插圖④","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確插圖。"},"2A41":{"name":"讀故事選插圖⑤","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確插圖。"},"2A51":{"name":"2A的國字①","desc":"描寫、抄寫國字：牛、羊、虎、魚、馬、鳥、毛、皮、角、骨"},"2A61":{"name":"讀故事選句子①","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A71":{"name":"讀故事選句子②","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A81":{"name":"讀故事選句子③","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A91":{"name":"讀故事選句子④","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A101":{"name":"讀故事選句子⑤","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A111":{"name":"讀故事選句子⑥","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後選出符合文章情節的正確句子，題目與選項句子皆以純注音的方式呈現。"},"2A121":{"name":"2A的國字②","desc":"描寫、抄寫國字：手、牙、耳、身、背、頭、衣、食、服、鞋"},"2A131":{"name":"讀故事回答問題①","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A141":{"name":"讀故事回答問題②","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A151":{"name":"讀故事回答問題③","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A161":{"name":"讀故事回答問題④","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A171":{"name":"讀故事回答問題⑤","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A181":{"name":"讀故事回答問題⑥","desc":"藉由閱讀故事來培養孩子的音讀能力與閱讀興趣。讓孩子在閱讀過後用注音回答問題，題目與純注音的方式呈現。"},"2A191":{"name":"2A的國字③","desc":"描寫、抄寫國字：花、筆、家、打、狗、忙、吃、杯、針、運"},"AⅠ1":{"name":"Ａ的閱讀①","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ11":{"name":"Ａ的閱讀②","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ21":{"name":"Ａ的閱讀③","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ31":{"name":"Ａ的閱讀④","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ41":{"name":"Ａ的國字①","desc":"讓學生能按正確的筆順、字形書寫，並具備良好的書寫習慣。（以第1 畫和第2 畫的筆畫種類分類。第1   畫的順序為：橫、橫折、橫折鉤→豎→點→ 撇。每張2個字）"},"AⅠ51":{"name":"Ａ的句型①","desc":"培養學生對基本句型的理解能力和獨力書寫常用單句的能力。形容詞為謂語的單句和簡單的比較句。含否定句，2~3個成分。"},"AⅠ61":{"name":"Ｂ的推薦圖書介紹①","desc":"推動、鼓勵學生閱讀推薦圖書。"},"AⅠ71":{"name":"Ａ的閱讀⑤","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ81":{"name":"Ａ的閱讀⑥","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ91":{"name":"Ａ的閱讀⑦","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ101":{"name":"Ａ的閱讀⑧","desc":"讓學生習慣展開形象化閱讀，並提高理解常用單句的能力和抄寫能力。"},"AⅠ111":{"name":"Ａ的國字②","desc":"讓學生能按正確的筆順、字形書寫，並具備良好的書寫習慣。（以第1 畫和第2 畫的筆畫種類分類。第1   畫的順序為：橫、橫折、橫折鉤→豎→點→ 撇。每張2個字）"},"AⅠ121":{"name":"Ａ的句型②","desc":"培養學生對基本句型的理解能力和獨力書寫常用單句的能力。動詞為謂語的單句。含及物動詞、不及物動詞和是、在、有、愛等詞語，2~3個成分。"},"AⅠ131":{"name":"找主語①","desc":"讓學生養成能隨時確認主語的閱讀習慣（含主語的省略、主謂相隔較遠、主語被代詞替換）和正確判斷主謂關係的能力。"},"AⅠ141":{"name":"找主語②","desc":"讓學生養成能隨時確認主語的閱讀習慣（含主語的省略、主謂相隔較遠、主語被代詞替換）和正確判斷主謂關係的能力。"},"AⅠ151":{"name":"找主語③","desc":"讓學生養成能隨時確認主語的閱讀習慣（含主語的省略、主謂相隔較遠、主語被代詞替換）和正確判斷主謂關係的能力。"},"AⅠ161":{"name":"找主語④","desc":"讓學生養成能隨時確認主語的閱讀習慣（含主語的省略、主謂相隔較遠、主語被代詞替換）和正確判斷主謂關係的能力。"},"AⅠ171":{"name":"找主語⑤","desc":"讓學生養成能隨時確認主語的閱讀習慣（含主語的省略、主謂相隔較遠、主語被代詞替換）和正確判斷主謂關係的能力。"},"AⅠ181":{"name":"Ａ的國字③","desc":"讓學生能按正確的筆順、字形書寫，並具備良好的書寫習慣。（以第1 畫和第2 畫的筆畫種類分類。第1   畫的順序為：橫、橫折、橫折鉤→豎→點→ 撇。每張2個字）"},"AⅠ191":{"name":"Ａ的句型③","desc":"培養學生對基本句型的理解能力和獨力書寫常用單句的能力。含不同狀語的單句。含表示地點、時間、情態、對象、手段、範圍等狀語，3~4個成分。"},"AⅡ1":{"name":"Ｂ的推薦圖書介紹②","desc":"推動、鼓勵學生閱讀推薦圖書。"},"AⅡ11":{"name":"畫面①","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ21":{"name":"畫面②","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ31":{"name":"畫面③","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ41":{"name":"畫面④","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ51":{"name":"畫面⑤","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ61":{"name":"畫面⑥","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ71":{"name":"畫面⑦","desc":"讓學生具備能根據文字選擇對應畫面的讀解能力，並提高學生對畫面中的重要內容（人、事、時、地等）的把握能力和解答能力。"},"AⅡ81":{"name":"Ａ的國字④","desc":"讓學生能按正確的筆順、字形書寫含特殊筆順在內的常用國字，並提高書寫速度。（以特殊筆畫的種類或字形結構來分類。每張3個字。）"},"AⅡ91":{"name":"Ａ的句型④","desc":"提高學生對含補語的句型的理解能力以及改寫句子的能力。含不同補語的單句，每張教材學習一種句型。"},"AⅡ101":{"name":"故事順序①","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列插圖（帶句子）順序並回答問題。"},"AⅡ111":{"name":"故事順序②","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列插圖（帶句子）順序並回答問題。"},"AⅡ121":{"name":"故事順序③","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列插圖（帶句子）順序並回答問題。"},"AⅡ131":{"name":"故事順序④","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列句子順序並回答問題。"},"AⅡ141":{"name":"故事順序⑤","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列句子順序並回答問題。"},"AⅡ151":{"name":"故事順序⑥","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列句子順序並回答問題。"},"AⅡ161":{"name":"故事順序⑦","desc":"透過排列順序（文章的前後順序）來培養學生把握複數場景的讀解能力，並提高解答能力（用完整的單句回答）。排列句子順序並回答問題。"},"AⅡ171":{"name":"Ａ的國字⑤","desc":"讓學生能按正確的筆順、字形書寫含特殊筆順在內的常用國字，並提高書寫速度。（以特殊筆畫的種類或字形結構來分類。每張3個字。）"},"AⅡ181":{"name":"Ａ的句型⑤","desc":"提高學生對含補語的句型的理解能力以及改寫句子的能力。句型①~④的複習，每張教材練習同樣一組句子。"},"AⅡ191":{"name":"Ｂ的推薦圖書介紹③","desc":"推動、鼓勵學生閱讀推薦圖書。"},"BⅠ1":{"name":"Ｂ的閱讀①","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ11":{"name":"Ｂ的閱讀②","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ21":{"name":"Ｂ的閱讀③","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ31":{"name":"Ｂ的閱讀④","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ41":{"name":"Ｂ的國字①","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以部首的種類來歸類）。"},"BⅠ51":{"name":"Ｂ的句型①","desc":"提高學生對含多重狀語、定語的句子的理解以及改寫能力。"},"BⅠ61":{"name":"Ｃ的推薦圖書介紹①","desc":"推動、鼓勵學生閱讀推薦圖書。"},"BⅠ71":{"name":"Ｂ的閱讀⑤","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ81":{"name":"Ｂ的閱讀⑥","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ91":{"name":"Ｂ的閱讀⑦","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ101":{"name":"Ｂ的閱讀⑧","desc":"讓學生在閱讀B 教材程度的文章時，習慣展開形象化閱讀，並具備抄寫B 教材句型的書寫能力。"},"BⅠ111":{"name":"Ｂ的國字②","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以部首的種類來歸類）。"},"BⅠ121":{"name":"Ｂ的句型②","desc":"提高學生對含多重狀語、定語的句子的理解以及改寫能力。"},"BⅠ131":{"name":"改寫句子①","desc":"讓學生透過改寫句子，提高理解文章和整理資訊的能力。"},"BⅠ141":{"name":"改寫句子②","desc":"讓學生透過改寫句子，提高理解文章和整理資訊的能力。"},"BⅠ151":{"name":"改寫句子③","desc":"讓學生透過改寫句子，提高理解文章和整理資訊的能力。"},"BⅠ161":{"name":"改寫句子④","desc":"讓學生透過改寫句子，提高理解文章和整理資訊的能力。"},"BⅠ171":{"name":"改寫句子⑤","desc":"讓學生透過改寫句子，提高理解文章和整理資訊的能力。"},"BⅠ181":{"name":"Ｂ的國字③","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以部首的種類來歸類）。"},"BⅠ191":{"name":"Ｂ的句型③","desc":"提高學生對含多重狀語、定語的句子的理解以及改寫能力。"},"BⅡ1":{"name":"Ｃ的推薦圖書介紹②","desc":"推動、鼓勵學生閱讀推薦圖書。"},"BⅡ11":{"name":"找變化、不同①","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ21":{"name":"找變化、不同②","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ31":{"name":"找變化、不同③","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ41":{"name":"找變化、不同④","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ51":{"name":"找變化、不同⑤","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ61":{"name":"找變化、不同⑥","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ71":{"name":"找變化、不同⑦","desc":"讓學生透過統一句式、下定義和分條羅列等手法來整理資訊，關注文章前後內容的關聯性。"},"BⅡ81":{"name":"Ｂ的國字④","desc":"透過練習60個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這20張分別以相同部件來歸類）。"},"BⅡ91":{"name":"Ｂ的句型④","desc":"提高學生對含各種補語的句子和「被」字句、「把」字句、「讓」字句的理解能力以及改寫能力。"},"BⅡ101":{"name":"相同與不同①","desc":"讓學生善於分類比較、區分異同。"},"BⅡ111":{"name":"相同與不同②","desc":"讓學生善於分類比較、區分異同。"},"BⅡ121":{"name":"相同與不同③","desc":"讓學生善於分類比較、區分異同。"},"BⅡ131":{"name":"相同與不同④","desc":"讓學生善於分類比較、區分異同。"},"BⅡ141":{"name":"相同與不同⑤","desc":"讓學生善於分類比較、區分異同。"},"BⅡ151":{"name":"相同與不同⑥","desc":"讓學生善於分類比較、區分異同。"},"BⅡ161":{"name":"相同與不同⑦","desc":"讓學生善於分類比較、區分異同。"},"BⅡ171":{"name":"Ｂ的國字⑤","desc":"透過練習60個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這20張分別以相同部件來歸類）。"},"BⅡ181":{"name":"Ｂ的句型⑤","desc":"提高學生對含各種補語的句子和「被」字句、「把」字句、「讓」字句的理解能力以及改寫能力。"},"BⅡ191":{"name":"Ｃ的推薦圖書介紹③","desc":"推動、鼓勵學生閱讀推薦圖書。"},"CI 1":{"name":"C的閱讀①","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力。"},"CI 11":{"name":"C的閱讀②","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力。"},"CI 21":{"name":"C的閱讀③","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力。"},"CI 31":{"name":"C的閱讀④","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力。"},"CI 41":{"name":"C的國字①","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以相同部件來歸類）。"},"CI 51":{"name":"C的句型①","desc":"提高學生對表示意願語感的句子的理解以及改寫能力。"},"CI 61":{"name":"D的推薦圖書介紹①","desc":"推動、鼓勵學生閱讀推薦圖書"},"CI 71":{"name":"C的閱讀⑤","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力"},"CI 81":{"name":"C的閱讀⑥","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力"},"CI 91":{"name":"C的閱讀⑦","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力"},"CI 101":{"name":"C的閱讀⑧","desc":"讓學生善於把握文章中的判斷、認知和其原因以及自己的感受等展開形象化閱讀，並熟悉C教材句型，進一步提高抄寫能力"},"CI 111":{"name":"C的國字②","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以相同部件來歸類）。"},"CI 121":{"name":"C的句型②","desc":"提高學生對比較複雜的「被」字句、「把」字句的理解以及改寫能力。"},"CI 131":{"name":"補訊息①","desc":"讓學生善於結合前後文以及經驗，透過補充省略的訊息、前提等來理解文章。"},"CI 141":{"name":"補訊息②","desc":"讓學生善於結合前後文以及經驗，透過補充省略的訊息、前提等來理解文章。"},"CI 151":{"name":"補訊息③","desc":"讓學生善於結合前後文以及經驗，透過補充省略的訊息、前提等來理解文章。"},"CI 161":{"name":"補訊息④","desc":"讓學生善於結合前後文以及經驗，透過補充省略的訊息、前提等來理解文章。"},"CI 171":{"name":"補訊息⑤","desc":"讓學生善於結合前後文以及經驗，透過補充省略的訊息、前提等來理解文章。"},"CI 181":{"name":"C的國字③","desc":"透過練習90個基礎國字（每10張30字），讓學生能按正確的筆順、字形書寫含有相同部首的國字，並提高書寫速度（這30張分別以相同部件來歸類）。"},"CI 191":{"name":"C的句型③","desc":"提高學生對表示強調語感的句子的理解以及改寫能力。"},"CII 1":{"name":"Ｄ的推薦圖書介紹②","desc":"Ｄ的推薦圖書介紹"},"CII 11":{"name":"摘錄要點①","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 21":{"name":"摘錄要點②","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 31":{"name":"摘錄要點③","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 41":{"name":"摘錄要點④","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 51":{"name":"摘錄要點⑤","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 61":{"name":"摘錄要點⑥","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 71":{"name":"摘錄要點⑦","desc":".讓學生根據所提供的觀點、條件，整理文章的重要訊息和脈絡，以此提高理解能力。\n.b面的題型主要分為三種：根據分條羅列的條件完成表格、根據疑問詞完成改寫文、回答問答題。"},"CII 81":{"name":"Ｃ的國字④","desc":"讓學生能按正確的筆順、字形，書寫含有相同部件的國字，並提高書寫速度。"},"CII 91":{"name":"Ｃ的句型④","desc":"提高學生對「兼語句」等以主謂結構為句子成分的句子的理解能力、改寫能力"},"CII 101":{"name":"５Ｗ１Ｈ①","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 111":{"name":"５Ｗ１Ｈ②","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 121":{"name":"５Ｗ１Ｈ③","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 131":{"name":"５Ｗ１Ｈ④","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 141":{"name":"５Ｗ１Ｈ⑤","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 151":{"name":"５Ｗ１Ｈ⑥","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 161":{"name":"５Ｗ１Ｈ⑦","desc":"讓學生透過把握５W１H來理解文章內容和脈絡，並能結合提問，準確的用完整的單句來整理答案。"},"CII 171":{"name":"Ｃ的國字⑤","desc":"讓學生能按正確的筆順、字形，書寫含有相同部件的國字，並提高書寫速度。"},"CII 181":{"name":"Ｃ的句型⑤","desc":"能選擇恰當的副詞來表達肯定、推測、強調等語氣。"},"CII 191":{"name":"Ｄ的推薦圖書介紹③","desc":"Ｄ的推薦圖書介紹"},"D1":{"name":"題目語1","desc":"閱讀短文；練習從上下文判斷句子中省略的主語；練習用一句話整理同一個主語的相關訊息。"},"D11":{"name":"題目語2","desc":"閱讀短文；練習從上下文判斷句子中省略的主語；練習用一句話整理同一個主語的相關訊息。"},"D21":{"name":"題目語3","desc":"閱讀短文；練習從上下文判斷句子中省略的主語；練習用一句話整理同一個主語的相關訊息。"},"D31":{"name":"題目語4","desc":"閱讀短文；練習從上下文判斷句子中省略的主語；練習用一句話整理同一個主語的相關訊息。"},"D41":{"name":"題目語5","desc":"閱讀短文；練習從上下文判斷句子中省略的主語；練習用一句話整理同一個主語的相關訊息。"},"D51":{"name":"命題化1","desc":"閱讀短文；學習將一個複雜的句子解析成數個簡單的句子來理解文意。"},"D61":{"name":"命題化2","desc":"閱讀短文；學習將一個複雜的句子解析成數個簡單的句子來理解文意。"},"D71":{"name":"命題化3","desc":"閱讀短文；學習將一個複雜的句子解析成數個簡單的句子來理解文意。"},"D81":{"name":"命題化4","desc":"閱讀短文；學習將一個複雜的句子解析成數個簡單的句子來理解文意。"},"D91":{"name":"命題化5","desc":"閱讀短文；學習將一個複雜的句子解析成數個簡單的句子來理解文意。"},"D101":{"name":"話題句1","desc":"閱讀短文；學習歸納文章中某一個段落的主旨。"},"D111":{"name":"話題句2","desc":"閱讀文章；學習歸納文章中某一個段落的主旨。"},"D121":{"name":"話題句3","desc":"閱讀文章；學習歸納文章中某一個段落的主旨。"},"D131":{"name":"話題句4","desc":"閱讀文章；學習歸納文章中某一個段落的主旨。"},"D141":{"name":"話題句5","desc":"閱讀文章；學習歸納文章中某一個段落的主旨。"},"D151":{"name":"話題段落句式圖1","desc":"閱讀文章；練習以句式圖的形式歸納文章中某一個段落的內容。"},"D161":{"name":"話題段落句式圖2","desc":"閱讀文章；練習以句式圖的形式歸納文章中某一個段落的內容。"},"D171":{"name":"話題段落句式圖3","desc":"閱讀文章；練習以句式圖的形式歸納文章中某一個段落的內容。"},"D181":{"name":"話題段落句式圖4","desc":"閱讀文章；練習以句式圖的形式歸納文章中某一個段落的內容。"},"D191":{"name":"E的閱讀","desc":"閱讀E教材程度的圖書；並撰寫此篇故事的心得。"},"E1":{"name":"連接詞1","desc":"閱讀短文；學習各種連接詞；理解連接詞的含意及作用；掌握常用的連接詞。"},"E11":{"name":"連接詞2","desc":"閱讀短文；學習各種連接詞；理解連接詞的含意及作用；掌握常用的連接詞。"},"E21":{"name":"句子和句子的連接1","desc":"閱讀短文；理解連接詞的邏輯關係；掌握連接詞在文章中的不同作用；熟悉連接詞的應用方式。"},"E31":{"name":"句子和句子的連接2","desc":"閱讀短文；理解連接詞的邏輯關係；掌握連接詞在文章中的不同作用；熟悉連接詞的應用方式。"},"E41":{"name":"句子和句子的連接3","desc":"閱讀短文；理解連接詞的邏輯關係；掌握連接詞在文章中的不同作用；熟悉連接詞的應用方式。"},"E51":{"name":"句子和句子的連接4","desc":"閱讀短文；理解連接詞的邏輯關係；掌握連接詞在文章中的不同作用；熟悉連接詞的應用方式。"},"E61":{"name":"話題段落間的連接1","desc":"閱讀短文；能理解複數個話題段落；練習以連接詞連接各個話題段落。"},"E71":{"name":"話題段落間的連接2","desc":"閱讀短文；能理解複數個話題段落；練習以連接詞連接各個話題段落。"},"E81":{"name":"話題段落間的連接3","desc":"閱讀短文；能理解複數個話題段落；練習以連接詞連接各個話題段落。"},"E91":{"name":"話題段落間的連接4","desc":"閱讀短文；能理解複數個話題段落；練習以連接詞連接各個話題段落。"},"E101":{"name":"焦點與展開1","desc":"閱讀文章；掌握文中人物的心情、舉動、想法、神態等；把握住文章中的主要脈絡。"},"E111":{"name":"焦點與展開2","desc":"閱讀文章；掌握文中人物的心情、舉動、想法、神態等；把握住文章中的主要脈絡。"},"E121":{"name":"焦點與展開3","desc":"閱讀文章；掌握文中人物的心情、舉動、想法、神態等；把握住文章中的主要脈絡。"},"E131":{"name":"焦點與展開4","desc":"閱讀（初旅）這篇文章；掌握文中人物的心情、舉動、想法、神態等；把握住文章中的主要脈絡。"},"E141":{"name":"因果關係1","desc":"閱讀文章；理解文中的事實根據和結論；進一步掌握複雜的因果關係。"},"E151":{"name":"因果關係2","desc":"閱讀文章；理解文中的事實根據和結論；進一步掌握複雜的因果關係。"},"E161":{"name":"因果關係3","desc":"閱讀文章；理解文中的事實根據和結論；進一步掌握複雜的因果關係。"},"E171":{"name":"因果關係4","desc":"閱讀文章；理解文中的事實根據和結論；進一步掌握複雜的因果關係。"},"E181":{"name":"因果關係5","desc":"閱讀文章；理解文中的事實根據和結論；進一步掌握複雜的因果關係。"},"E191":{"name":"F的閱讀","desc":"閱讀F教材程度的圖書；並撰寫此篇故事的心得。"},"F1":{"name":"指示對象1","desc":"閱讀短文；學習常見具有代表性的指示詞；理解文章中的各種指代關係。"},"F11":{"name":"指示對象2","desc":"閱讀短文；學習常見具有代表性的指示詞；理解文章中的各種指代關係。"},"F21":{"name":"指示對象3","desc":"閱讀短文；學習常見具有代表性的指示詞；理解文章中的各種指代關係。"},"F31":{"name":"指示對象4","desc":"閱讀短文；學習常見具有代表性的指示詞；理解文章中的各種指代關係。"},"F41":{"name":"指示對象5","desc":"閱讀短文；學習常見具有代表性的指示詞；理解文章中的各種指代關係。"},"F51":{"name":"解釋與分析1","desc":"閱讀短文；理解文中所使用的解釋、舉例、描寫、比喻等修飾方法；掌握文章中抽象與具體的關係。"},"F61":{"name":"解釋與分析2","desc":"閱讀短文；理解文中所使用的解釋、舉例、描寫、比喻等修飾方法；掌握文章中抽象與具體的關係。"},"F71":{"name":"解釋與分析3","desc":"閱讀短文；理解文中所使用的解釋、舉例、描寫、比喻等修飾方法；掌握文章中抽象與具體的關係。"},"F81":{"name":"解釋與分析4","desc":"閱讀短文；理解文中所使用的解釋、舉例、描寫、比喻等修飾方法；掌握文章中抽象與具體的關係。"},"F91":{"name":"解釋與分析5","desc":"閱讀短文；理解文中所使用的解釋、舉例、描寫、比喻等修飾方法；掌握文章中抽象與具體的關係。"},"F101":{"name":"話題段落的成分1","desc":"閱讀文章；在有框架的條件下練習話題段落句；判斷話題段落的範圍。"},"F111":{"name":"話題段落的成分2","desc":"閱讀文章；在有框架的條件下練習話題段落句；判斷話題段落的範圍。"},"F121":{"name":"話題段落的成分3","desc":"閱讀文章；在有框架的條件下練習話題段落句；判斷話題段落的範圍。"},"F131":{"name":"話題段落的成分4","desc":"閱讀文章；在有框架的條件下練習話題段落句；判斷話題段落的範圍。"},"F141":{"name":"話題段落的成分5","desc":"閱讀文章；在有框架的條件下練習話題段落句；判斷話題段落的範圍。"},"F151":{"name":"話題段落間的脈絡1","desc":"閱讀文章；練習複數個話題段落的話題句及文章脈絡解說文；把握文章整體的結構脈絡及話題段落間的輕重關係。"},"F161":{"name":"話題段落間的脈絡2","desc":"閱讀文章；練習複數個話題段落的話題句及文章脈絡解說文；把握文章整體的結構脈絡及話題段落間的輕重關係。"},"F171":{"name":"話題段落間的脈絡3","desc":"閱讀文章；練習複數個話題段落的話題句及文章脈絡解說文；把握文章整體的結構脈絡及話題段落間的輕重關係。"},"F181":{"name":"話題段落間的脈絡4","desc":"閱讀文章；練習複數個話題段落的話題句及文章脈絡解說文；把握文章整體的結構脈絡及話題段落間的輕重關係。"},"F191":{"name":"G的閱讀","desc":"閱讀G教材程度的圖書；並撰寫此篇故事的心得。"},"G1":{"name":"縮微作法1","desc":"了解縮微文的形式為話題＋陳述內容；學習單一話題斷話縮微的基礎內容。"},"G11":{"name":"縮微作法2","desc":"體會如何判斷縮微文的核心句與話題；學習單一話題斷話縮微的基礎內容。"},"G21":{"name":"縮微作法3","desc":"體會如何判斷縮微文的核心句與話題；學習單一話題斷話縮微的基礎內容。"},"G31":{"name":"縮微作法4","desc":"體會短文的邏輯結構如何體現在縮微文之中；學習單一話題斷話縮微的基礎內容。"},"G41":{"name":"縮微作法5","desc":"體會短文的邏輯結構如何體現在縮微文之中；學習單一話題斷話縮微的基礎內容。"},"G51":{"name":"縮微作法6","desc":"體會如何將縮微文的核心句以外的訊息組織進縮微文之中；學習單一話題斷話縮微的基礎內容。"},"G61":{"name":"縮微作法7","desc":"進一步提高語言組織能力，完成縮微文；學習單一話題斷話縮微的基礎內容。"},"G71":{"name":"單句歸納1","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G81":{"name":"單句歸納2","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G91":{"name":"單句歸納3","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G101":{"name":"單句歸納4","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G111":{"name":"單句歸納5","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G121":{"name":"單句歸納6","desc":"閱讀文章；學習歸納、整理文章訊息的能力；把握文章結構並提高話題意識｡"},"G131":{"name":"話題和陳述內容1","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G141":{"name":"話題和陳述內容2","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G151":{"name":"話題和陳述內容3","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G161":{"name":"話題和陳述內容4","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G171":{"name":"話題和陳述內容5","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G181":{"name":"話題和陳述內容6","desc":"閱讀文章；學習以縮微文的基本形式（話題＋陳述內容）來歸納縮微文。"},"G191":{"name":"H的閱讀","desc":"閱讀H教材程度的圖書；並撰寫此篇故事的心得。"},"H1":{"name":"概念關係示意圖1","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H11":{"name":"概念關係示意圖2","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H21":{"name":"概念關係示意圖3","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H31":{"name":"概念關係示意圖4","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H41":{"name":"概念關係示意圖5","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H51":{"name":"概念關係示意圖6","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H61":{"name":"概念關係示意圖7","desc":"閱讀文章；學習判斷話題與文章各訊息間的相對關係；在明確概念關係的基礎上練習完成縮微文。"},"H71":{"name":"讓人關注的表現1","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H81":{"name":"讓人關注的表現2","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H91":{"name":"讓人關注的表現3","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H101":{"name":"讓人關注的表現4","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H111":{"name":"讓人關注的表現5","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H121":{"name":"讓人關注的表現6","desc":"閱讀文章；學習捕捉更微妙的細節；練習準確的將文章中的關鍵詞語組織在縮微文中。"},"H131":{"name":"單一話題段落的縮微1","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H141":{"name":"單一話題段落的縮微2","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H151":{"name":"單一話題段落的縮微3","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H161":{"name":"單一話題段落的縮微4","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H171":{"name":"單一話題段落的縮微5","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H181":{"name":"單一話題段落的縮微6","desc":"閱讀文章；培養話題段落意識；在明確話題段落的基礎上完成單一話題段落的縮微文。"},"H191":{"name":"I的閱讀","desc":"閱讀I教材程度的圖書；並撰寫此篇故事的心得。"},"I1":{"name":"把握話題轉換的縮微1","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I11":{"name":"把握話題轉換的縮微2","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I21":{"name":"把握話題轉換的縮微3","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I31":{"name":"把握話題轉換的縮微4","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I41":{"name":"把握話題轉換的縮微5","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I51":{"name":"把握話題轉換的縮微6","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I61":{"name":"把握話題轉換的縮微7","desc":"閱讀文章；把握話題的變化，能自行完成單一話題段落的縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I71":{"name":"兼顧前後文的縮微1","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I81":{"name":"兼顧前後文的縮微2","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I91":{"name":"兼顧前後文的縮微3","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I101":{"name":"兼顧前後文的縮微4","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I111":{"name":"兼顧前後文的縮微5","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I121":{"name":"兼顧前後文的縮微6","desc":"閱讀文章；能兼顧前後話題段落的內容、關聯性的前提下，完成縮微文；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I131":{"name":"縮微式的讀解1","desc":"閱讀文章；在完成縮微文的基礎上，能掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I141":{"name":"縮微式的讀解2","desc":"閱讀文章；在完成縮微文的基礎上，掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I151":{"name":"縮微式的讀解3","desc":"閱讀文章；在完成縮微文的基礎上，能掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I161":{"name":"縮微式的讀解4","desc":"閱讀文章；在完成縮微文的基礎上，能掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I171":{"name":"縮微式的讀解5","desc":"閱讀文章；在完成縮微文的基礎上，能掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I181":{"name":"縮微式的讀解6","desc":"閱讀文章；在完成縮微文的基礎上，能掌握文章的層次；培養自力完成縮微文並達到豐富詞藻､應用詞彙的能力｡"},"I191":{"name":"J的閱讀","desc":"閱讀J教材程度的圖書；並撰寫此篇故事的心得。"},"J1":{"name":"古典的縮微1","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J11":{"name":"古典的縮微2","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J21":{"name":"古典的縮微3","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J31":{"name":"古典的縮微4","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J41":{"name":"古典的縮微5","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J51":{"name":"古典的縮微6","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J61":{"name":"古典的縮微7","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；把握語言在歷史上的變遷並進一步掌握作品的時代背景｡"},"J71":{"name":"針對古典的解說1","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J81":{"name":"針對古典的解說2","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J91":{"name":"針對古典的解說3","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J101":{"name":"針對古典的解說4","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J111":{"name":"針對古典的解說5","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J121":{"name":"針對古典的解說6","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J131":{"name":"針對古典的解說7","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握作品的時代背景並進一步以引用的方式對文章做評析｡"},"J141":{"name":"從古典中引用1","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"J151":{"name":"從古典中引用2","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"J161":{"name":"從古典中引用3","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"J171":{"name":"從古典中引用4","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"J181":{"name":"從古典中引用5","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"J191":{"name":"從古典中引用6","desc":"閱讀古文；讓孩子透過對譯的方式學習古文；掌握以引用的方式對文章做評析並培養孩子批判性思考､自我邏輯思考的能力｡"},"K1":{"name":"詞義∙概念1","desc":"閱讀十首唐絕句；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K11":{"name":"詞義∙概念2","desc":"閱讀十首唐律師；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K21":{"name":"詞義∙概念3","desc":"閱讀四首唐樂府；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K31":{"name":"詞義∙概念4","desc":"閱讀古文；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K41":{"name":"詞義∙概念5","desc":"閱讀古文；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K51":{"name":"詞義∙概念6","desc":"閱讀古文；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K61":{"name":"詞義∙概念7","desc":"閱讀十首宋詩；了解古文基本虛字的用法、並能深入的斟酌字詞的含義來歸納解說文的主旨。"},"K71":{"name":"觀點∙依據1","desc":"閱讀十首宋詞；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K81":{"name":"觀點∙依據2","desc":"閱讀八首宋詞；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K91":{"name":"觀點∙依據3","desc":"閱讀古文；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K101":{"name":"觀點∙依據4","desc":"閱讀古文；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K111":{"name":"觀點∙依據5","desc":"閱讀古文；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K121":{"name":"觀點∙依據6","desc":"閱讀十首元曲；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K131":{"name":"觀點∙依據7","desc":"閱讀元曲；了解古文基本句型的用法、並能深入的斟酌觀點與依據的對應關係來歸納解說文的觀點與依據。"},"K141":{"name":"論點的展開1","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"K151":{"name":"論點的展開2","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"K161":{"name":"論點的展開3","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"K171":{"name":"論點的展開4","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"K181":{"name":"論點的展開5","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"K191":{"name":"論點的展開6","desc":"閱讀古文；關注文章結構、手法；能深入的斟酌文章結構、手法來歸納解說文的論證過程。"},"L1":{"name":"著眼點1","desc":"閱讀（孔子的思想：仁）；練習分析文章的著眼點及有此著眼點的理由。"},"L11":{"name":"著眼點2","desc":"閱讀（孟子旁通）；練習分析文章的著眼點及有此著眼點的理由。"},"L21":{"name":"著眼點3","desc":"閱讀（兵道與人道）；練習分析文章的著眼點及有此著眼點的理由。"},"L31":{"name":"著眼點4","desc":"閱讀（我讀莊子）；練習分析文章的著眼點及有此著眼點的理由。"},"L41":{"name":"著眼點5","desc":"閱讀（荀子的性惡論）；練習分析文章的著眼點及有此著眼點的理由。"},"L51":{"name":"著眼點6","desc":"閱讀（孟子荀子韓非子對人的本質的認識）；練習分析文章的著眼點及有此著眼點的理由。"},"L61":{"name":"著眼點7","desc":"閱讀（楚辭女性中心說）；練習分析文章的著眼點及有此著眼點的理由。"},"L71":{"name":"驗證1","desc":"閱讀（史記是實錄嗎）；針對著眼點，練習解決問題的手法。"},"L81":{"name":"驗證2","desc":"閱讀（陶淵明的自然論）；針對著眼點，練習解決問題的手法。"},"L91":{"name":"驗證3","desc":"閱讀（玉階怨題解）；針對著眼點，練習解決問題的手法。"},"L101":{"name":"驗證4","desc":"閱讀（不斷成長的詩人－杜甫詩歌藝術的特質）；針對著眼點，練習解決問題的手法。"},"L111":{"name":"驗證5","desc":"閱讀（韓愈文論的是、異之辯）；針對著眼點，練習解決問題的手法。"},"L121":{"name":"驗證6","desc":"閱讀（柳宗元：後先生蓋千祀矣，余再逐而浮湘）；針對著眼點，練習解決問題的手法。"},"L131":{"name":"驗證7","desc":"閱讀（說李煜詞）；針對著眼點，練習解決問題的手法。"},"L141":{"name":"呼應1","desc":"閱讀（康震評說唐宋八大家歐陽修、曾鞏）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"},"L151":{"name":"呼應2","desc":"閱讀（前、後赤壁賦旨意新探）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"},"L161":{"name":"呼應3","desc":"閱讀（蘇軾、辛棄疾豪放時風之比較）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"},"L171":{"name":"呼應4","desc":"閱讀（論關漢卿散曲的思想性）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"},"L181":{"name":"呼應5","desc":"閱讀（解读儒林外史）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"},"L191":{"name":"呼應6","desc":"閱讀（真假觀念與夢幻世界－紅樓夢藝境探微）；針對著眼點與解決的手法，分析其行文優點並練習以完整的書面形式表達。"}}};
+function buildCodeDatalists(){
+  const subjMap = { codeList_math: '數學', codeList_chinese: '國語', codeList_english: '英文' };
+  // 選單內容 = 內建對照表 + 自訂新增的代號 － 已刪除的代號(教材代號對照表分頁可增刪)
+  const codesOf = subj => {
+    const ov = materialOverridesCache[subj] || {};
+    const set = Object.keys(MATERIAL_LOOKUP[subj] || {}).concat(Object.keys(ov));
+    const seen = {};
+    return set.filter(c=>{
+      if(seen[c]) return false;
+      seen[c] = true;
+      return !(ov[c] && ov[c].deleted);
+    });
+  };
+  let html = '';
+  Object.keys(subjMap).forEach(listId => {
+    const opts = codesOf(subjMap[listId]).map(code => `<option value="${escapeAttr(code)}">`).join('');
+    html += `<datalist id="${listId}">${opts}</datalist>`;
+  });
+  // 科目未選時，提供三科合併的清單
+  const seenAll = {};
+  const allOpts = GRID_SUBJECTS.reduce((acc, s)=>acc.concat(codesOf(s)), [])
+    .filter(c=>{ if(seenAll[c]) return false; seenAll[c] = true; return true; })
+    .map(code => `<option value="${escapeAttr(code)}">`).join('');
+  html += `<datalist id="codeList_all">${allOpts}</datalist>`;
+  return html;
+}
+
+let db = null;
+let studentsCache = {};   // id -> {name, nickname}
+let progressCache = {};   // studentId -> { periodId: {period,isCurrent,order,subjects:{sid:{subject,code,name,desc,order}}} }
+let progressMetaCache = {}; // studentId -> {parentMsgNo}
+let materialOverridesCache = {}; // subject -> {code: {name,desc}}，使用者在「教材代號對照表」調整過的內容(覆蓋內建MATERIAL_LOOKUP)
+let bwMode = false; // 黑白列印模式:勾選後renderReportHtml()產生的報告會加上bw-mode class，改用黑/灰階配色
+// 2026-09-15:這個版本固定輸出A3橫式——移除了A4/A3自動判斷、紙張格式選單，
+// 以及「列印全部A4學生」按鈕，列印時一律送 @page{size:A3 landscape}。
+// 列印前呼叫這個函式，把 #pageSizeStyle 這個獨立<style>的內容換成這次要用的紙張尺寸；
+// 瀏覽器同一次列印沒辦法可靠混用兩種紙張尺寸，所以每次列印都只能是單一尺寸。
+function setPrintPageSize(isA3){
+  const el = document.getElementById('pageSizeStyle');
+  if(el) el.textContent = isA3 ? '@page{ size:A3 landscape; margin:0; }' : '@page{ size:A4 portrait; margin:0; }';
+}
+let settingsCache = {
+  greeting: "{nick}　目前的學習進度，在持續學習 KUMON 的教材過程中，能變得有自信，增加理解力、應用能力和處理功課的能力等。",
+  // rewardTitle:報告上獎勵框的第一行標題；rewardUnit:接在總點數後面的文字(例「＋150點」的「點」)。
+  // 兩個都做成共用設定，隨時可在「共用文字設定」分頁改，不用改程式。
+  rewardTitle: "★ 目標達成獎勵",
+  rewardPoints: 50,
+  rewardDate: "2026年8月",
+  rewardUnit: "點",
+  parentTitle: "★給家長的話★",
+  parentMessages: {
+    1: "看著孩子每日30分鐘的堅持，從基礎計算到流暢解題，這份自律正在為未來鋪路。\n您的陪伴讓練習不只是作業，而是親子共同成長的珍貴時光，相信這份自學力將成為孩子終身受用的禮物。",
+    2: "當孩子提前掌握高年級內容時，我們看見的不僅是能力，更是勇於挑戰的決心。\n請繼續以信任支持這份學習節奏，KUMON的個別化進度會讓孩子持續閃耀。",
+    3: "計時練習培養出的專注力，已逐漸展現在您寶貝的生活規劃中。\n這份能力需要親師共同灌溉，您提醒孩子「每天進步一點點」的身影，就是最溫暖的養分。",
+    4: "從逐字朗讀到流暢表達，孩子正用KUMON國語教材搭建思維階梯。\n當親子共讀時光化為討論與微笑，我們知道文字已不只是符號，而是探索世界的望遠鏡。",
+    5: "英文教材中的反覆練習，讓孩子從單字記憶進階到句型運用。\n您在家中營造的語言環境，搭配KUMON系統性累積，正逐步打開國際視野的大門。",
+    6: "面對卡關時的深呼吸與再嘗試，比完美表現更值得喝采。\n您接納孩子暫時性困惑的包容力，將轉化為他們勇於面對挑戰的韌性。",
+    7: "透過每次的學習報告，我們共同見證孩子從「跟隨者」成為「規劃者」的轉變。\n您與老師溝通的每個細節，都在幫助孩子繪製獨一無二的能力藍圖。",
+    8: "數學的邏輯推導、語文的結構分析，這些能力正悄然滋養著孩子。\n您觀察到的課外興趣與KUMON學習的連結，正是綜合素養的萌芽。",
+    9: "當孩子主動調整練習節奏、規劃複習重點時，我們看見教育最美好的模樣。\n您的放手與適時引導，完美詮釋了「陪伴而不干涉」的智慧。",
+    10: "KUMON培養的不只是學科能力，更是對新知的渴望與探索方法。\n您充分與老師配合的態度，將與教室訓練相輔相成，為孩子裝上永不停歇的成長引擎。",
+    11: "從運筆姿勢到解題步驟，孩子逐漸養成的精準習慣，將成為未來深層學習的基石。\n您用心陪伴孩子的學習，是成長軌跡的最佳見證。",
+    12: "當親子對話從「寫完沒？」轉為「今天發現了什麼？」，KUMON練習已成為家庭能量的充電站。\n這份正向互動，將持續為孩子積累心理資本。",
+    13: "無論是速度突破或級教材進階，每次小勝利都在建構「我能做到」的自我認知。\n您真誠的喝采與具體鼓勵，讓進步成為可視化的信心來源。",
+    14: "當孩子展現超出預期的理解力時，我們再次驗證適性教育的力量。\n您對個別化進度的支持，正幫助孩子繞過傳統框架，直達能力核心。",
+    15: "三個月前還需逐步引導的題型，如今已成為孩子自信解題的領域。\n這印證了每日耕耘的價值，而您穩定的陪伴節奏，正是最關鍵的成長催化劑。",
+    16: "卡關時的眼淚與重啟，記錄著比學科知識更重要的生命課程。\n您「接納情緒但不放棄嘗試」的態度，培養出孩子面對逆境的復原力。",
+    17: "當家庭作業不再只是孩子獨自的任務，而是親師生三方對話的媒介，我們真正實踐了「教育合夥人」的理念。\n您的每次回饋都在豐富這個成長生態圈。",
+    18: "專注時間從15分鐘延長到半小時，這份堅持力已悄悄影響著孩子的學習。\n您察覺到的跨領域進步，正是KUMON教育的溢出效應。",
+    19: "當您分享自身克服學習困難的經驗時，親子關係已升級為成長夥伴。\n這份雙向對話讓KUMON練習突破紙本框架，成為價值觀傳遞的媒介。"
+  },
+  sign: "KUMON 員林大同正興教室　　陳秀茹　　老師敬上"
+};
+
+function initFirebase(){
+  if(!FIREBASE_CONFIG.apiKey){
+    document.getElementById('connStatus').textContent = "尚未設定 Firebase（請在原始碼填入 FIREBASE_CONFIG）";
+    return;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.database();
+
+  // 先確認登入狀態，登入後才開始讀取資料
+  firebase.auth().onAuthStateChanged(user => {
+    if(user){
+      document.getElementById('loginOverlay').classList.remove('show');
+      document.getElementById('userEmail').textContent = user.email || "";
+      document.getElementById('logoutBtn').style.display = "";
+      startDataListeners();
+    }else{
+      document.getElementById('loginOverlay').classList.add('show');
+      document.getElementById('userEmail').textContent = "";
+      document.getElementById('logoutBtn').style.display = "none";
+      document.getElementById('connStatus').textContent = "尚未登入";
+    }
+  });
+}
+
+const AUTH_ERROR_TEXT = {
+  "auth/invalid-email": "Email 格式不正確",
+  "auth/user-disabled": "這個帳號已被停用",
+  "auth/user-not-found": "Email 或密碼錯誤",
+  "auth/wrong-password": "Email 或密碼錯誤",
+  "auth/invalid-credential": "Email 或密碼錯誤",
+  "auth/invalid-login-credentials": "Email 或密碼錯誤",
+  "auth/too-many-requests": "嘗試次數太多，請稍後再試",
+  "auth/network-request-failed": "網路連線失敗，請檢查網路",
+  "auth/operation-not-allowed": "Firebase 尚未啟用「電子郵件/密碼」登入方式"
+};
+function authErrorText(err){
+  return AUTH_ERROR_TEXT[err.code] || ("登入失敗：" + err.message);
+}
+
+function doLogin(e){
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value.trim();
+  const pw = document.getElementById('loginPassword').value;
+  const msg = document.getElementById('loginMsg');
+  const btn = document.getElementById('loginBtn');
+  msg.className = ""; msg.textContent = "";
+  btn.disabled = true; btn.textContent = "登入中…";
+  firebase.auth().signInWithEmailAndPassword(email, pw)
+    .then(() => { document.getElementById('loginPassword').value = ""; })
+    .catch(err => { msg.textContent = authErrorText(err); })
+    .finally(() => { btn.disabled = false; btn.textContent = "登入"; });
+}
+
+function forgotPassword(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const msg = document.getElementById('loginMsg');
+  if(!email){ msg.className = ""; msg.textContent = "請先在上方輸入 Email，再按「忘記密碼」"; return; }
+  firebase.auth().sendPasswordResetEmail(email)
+    .then(() => { msg.className = "ok"; msg.textContent = "已寄出重設密碼信，請到信箱收信"; })
+    .catch(err => { msg.className = ""; msg.textContent = authErrorText(err); });
+}
+
+function doLogout(){
+  if(!confirm("確定要登出嗎？")) return;
+  // 重新整理頁面，把畫面上已載入的學生資料一併清掉
+  firebase.auth().signOut().then(() => location.reload());
+}
+
+let dataListenersStarted = false;
+function startDataListeners(){
+  if(dataListenersStarted) return;
+  dataListenersStarted = true;
+  document.getElementById('connStatus').textContent = "連線中…";
+
+  setTimeout(()=>{
+    if(document.getElementById('connStatus').textContent === "連線中…"){
+      document.getElementById('connStatus').textContent = "連線逾時，請確認 Realtime Database 是否已建立、databaseURL 是否正確";
+    }
+  }, 6000);
+
+  db.ref(DB_ROOT + "/students").on("value", snap => {
+    studentsCache = snap.val() || {};
+    renderStudentTable();
+    renderStudentSelects();
+    document.getElementById('connStatus').textContent = "已連線";
+  }, err => {
+    document.getElementById('connStatus').textContent = (err.code === "PERMISSION_DENIED" || /permission/i.test(err.message))
+      ? "這個帳號沒有讀取權限，請聯絡管理者" : "連線失敗：" + err.message;
+    console.error("Firebase 讀取失敗", err);
+  });
+  db.ref(DB_ROOT + "/progress").on("value", snap => {
+    progressCache = snap.val() || {};
+    renderPeriods();
+  }, err => {
+    console.error("Firebase 讀取失敗(progress)", err);
+  });
+  db.ref(DB_ROOT + "/progressMeta").on("value", snap => {
+    progressMetaCache = snap.val() || {};
+    renderParentMsgPicker();
+  }, err => {
+    console.error("Firebase 讀取失敗(progressMeta)", err);
+  });
+  db.ref(DB_ROOT + "/materialOverrides").on("value", snap => {
+    materialOverridesCache = snap.val() || {};
+    renderMaterialTable();
+    renderPeriods(); // 已顯示中的代號預覽文字也要跟著更新
+  }, err => {
+    console.error("Firebase 讀取失敗(materialOverrides)", err);
+  });
+  db.ref(DB_ROOT + "/settings/global").on("value", snap => {
+    const v = snap.val();
+    if(v){
+      // 用 Object.assign 跟預設值合併，而不是直接整包蓋過去——
+      // 否則之前存過設定、但沒有這次新增欄位(例如rewardDate)的舊資料，
+      // 會讓新欄位整個變成undefined，畫面看起來像「文字不見了」。
+      settingsCache = Object.assign({}, settingsCache, v);
+      document.getElementById('settingGreeting').value = settingsCache.greeting || "";
+      document.getElementById('settingRewardTitle').value = settingsCache.rewardTitle || "";
+      document.getElementById('settingRewardPoints').value = (settingsCache.rewardPoints != null ? settingsCache.rewardPoints : 50);
+      document.getElementById('settingRewardDate').value = settingsCache.rewardDate || "";
+      // rewardUnit允許留空(只顯示數字)，所以不能用 || 預設值蓋掉，要判斷是不是undefined
+      document.getElementById('settingRewardUnit').value = (settingsCache.rewardUnit != null ? settingsCache.rewardUnit : "點");
+      document.getElementById('settingParentTitle').value = settingsCache.parentTitle || "";
+      document.getElementById('settingSign').value = settingsCache.sign || "";
+      renderParentMsgSettings();
+    }
+  }, err => {
+    console.error("Firebase 讀取失敗(settings)", err);
+  });
+}
+
+/* ---------------- Tabs ---------------- */
+function switchTab(tabName){
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tabName));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+tabName).classList.add('active');
+}
+document.querySelectorAll('nav.tabs button').forEach(btn=>{
+  btn.addEventListener('click', ()=> switchTab(btn.dataset.tab));
+});
+
+/* ---------------- 學生名單 ---------------- */
+function requireDb(){
+  if(!db){
+    alert("尚未完成 Firebase 連線設定，請先在原始碼的 FIREBASE_CONFIG 填入設定值（或洽開發者確認）。");
+    return false;
+  }
+  return true;
+}
+function addStudent(){
+  if(!requireDb()) return;
+  const name = document.getElementById('newStudentName').value.trim();
+  const nick = document.getElementById('newStudentNick').value.trim();
+  if(!name){ alert("請輸入姓名"); return; }
+  const id = db.ref(DB_ROOT + "/students").push().key;
+  db.ref(DB_ROOT + "/students/" + id).set({name, nickname: nick || name, createdAt: Date.now()});
+  document.getElementById('newStudentName').value = "";
+  document.getElementById('newStudentNick').value = "";
+}
+function deleteStudent(id){
+  if(!requireDb()) return;
+  if(!confirm("確定刪除這位學生？進度資料也會一併刪除。")) return;
+  db.ref(DB_ROOT + "/students/" + id).remove();
+  db.ref(DB_ROOT + "/progress/" + id).remove();
+  db.ref(DB_ROOT + "/progressMeta/" + id).remove();
+}
+function renderStudentTable(){
+  const body = document.getElementById('studentTableBody');
+  const allIds = Object.keys(studentsCache);
+  document.getElementById('studentCount').textContent = allIds.length;
+  const pendingCount = allIds.filter(id=>studentsCache[id].reviewPending).length;
+  document.getElementById('reviewPendingInfo').textContent = pendingCount ? `● 有 ${pendingCount} 位待確認` : '';
+  const keyword = (document.getElementById('studentSearch').value || '').trim().toLowerCase();
+  const ids = keyword
+    ? allIds.filter(id=>{
+        const s = studentsCache[id];
+        return (s.name||'').toLowerCase().includes(keyword) || (s.nickname||'').toLowerCase().includes(keyword);
+      })
+    : allIds;
+  if(ids.length === 0){
+    body.innerHTML = `<tr><td colspan="5" style="color:var(--ink-soft);text-align:center;padding:20px;">找不到符合「${escapeHtml(keyword)}」的學生</td></tr>`;
+    return;
+  }
+  body.innerHTML = ids.map(id=>{
+    const s = studentsCache[id];
+    // 狀態優先序:匯入後有異動的「待確認」最優先，其次才是設定完成與否
+    const statusHtml = s.reviewPending
+      ? '<span style="color:#C0562E;font-weight:700;">● 待確認</span>'
+        + `<br><button class="btn btn-secondary btn-small" style="margin-top:4px;" onclick="clearReviewPending('${id}')">已確認</button>`
+      : (s.setupDone
+          ? '<span style="color:#2F7A6F;font-weight:700;">✓ 已完成</span>'
+          : '<span style="color:var(--ink-soft);">未完成</span>');
+    const lastUpdatedHtml = s.lastUpdated
+      ? `<span style="font-size:12px;color:var(--ink-soft);">${formatTimestamp(s.lastUpdated)}</span>`
+      : '<span style="font-size:12px;color:var(--ink-soft);">—</span>';
+    return `<tr>
+      <td><a href="javascript:void(0)" class="student-name-link" onclick="goToStudentProgress('${id}')">${escapeHtml(s.name)}</a></td>
+      <td>${escapeHtml(s.nickname||'')}</td>
+      <td>${statusHtml}</td>
+      <td>${lastUpdatedHtml}</td>
+      <td>
+        <button class="btn btn-secondary btn-small" onclick="editStudent('${id}')">編輯</button>
+        <button class="btn btn-danger btn-small" onclick="deleteStudent('${id}')">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+/* 匯入總表後被標成「待確認」的學生，老師核對完就按這裡清掉標記 */
+function clearReviewPending(id){
+  if(!requireDb()) return;
+  db.ref(DB_ROOT + "/students/" + id).update({reviewPending: null});
+}
+function clearAllReviewPending(){
+  if(!requireDb()) return;
+  const ids = Object.keys(studentsCache).filter(id=>studentsCache[id].reviewPending);
+  if(ids.length === 0){ alert('目前沒有「待確認」的學生。'); return; }
+  if(!confirm(`要把 ${ids.length} 位「待確認」的學生全部標成已確認嗎？`)) return;
+  const updates = {};
+  ids.forEach(id=>{ updates[`${DB_ROOT}/students/${id}/reviewPending`] = null; });
+  firebase.database().ref().update(updates);
+}
+function goToStudentProgress(id){
+  document.getElementById('progressStudentSelect').value = id;
+  syncProgressStudentSearchLabel();
+  loadProgressForSelected();
+  switchTab('progress');
+}
+function editStudent(id){
+  if(!requireDb()) return;
+  const s = studentsCache[id];
+  const name = prompt("姓名", s.name);
+  if(name===null) return;
+  const nick = prompt("暱稱", s.nickname||'');
+  if(nick===null) return;
+  db.ref(DB_ROOT + "/students/" + id).update({name, nickname: nick});
+}
+function batchImportStudents(){
+  if(!requireDb()) return;
+  const raw = document.getElementById('batchImportText').value;
+  const names = raw.split(/[\n,、]/).map(s=>s.trim()).filter(Boolean);
+  if(!names.length){ alert("請先貼上姓名清單"); return; }
+  const existing = new Set(Object.values(studentsCache).map(s=>s.name));
+  const updates = {};
+  let addCount = 0, skipCount = 0;
+  names.forEach(name=>{
+    if(existing.has(name)){ skipCount++; return; }
+    existing.add(name); // 避免清單內本身重複
+    const id = db.ref(DB_ROOT + "/students").push().key;
+    const nick = name.length > 1 ? name.slice(1) : name;
+    updates[`${DB_ROOT}/students/${id}`] = {name, nickname: nick, createdAt: Date.now()};
+    addCount++;
+  });
+  if(addCount === 0){ alert("沒有新姓名可新增（都已存在）"); return; }
+  firebase.database().ref().update(updates).then(()=>{
+    alert(`已新增 ${addCount} 位學生${skipCount ? '，略過 ' + skipCount + ' 位重複姓名' : ''}。暱稱預設為姓名去掉第一個字，可再到清單裡個別編輯。`);
+    document.getElementById('batchImportText').value = "";
+  });
+}
+function renderStudentSelects(){
+  const progressSel = document.getElementById('progressStudentSelect');
+  const previewSel = document.getElementById('previewStudentSelect');
+  // 重要：每次編輯進度資料的任何一個欄位，都會順便更新該學生的 lastUpdated，
+  // 這會讓 Firebase 的 students 監聽器再次觸發、重建這兩個下拉選單。
+  // 如果重建時沒有記住「原本選的是誰」，選單就會被瀏覽器預設重置回清單第一位學生，
+  // 使用者卻不會發現選單已經悄悄跳走，導致接下來輸入的內容其實存到了別的學生身上。
+  // 所以這裡先記住目前選取的學生，重建選項後再選回去。
+  const prevProgressId = progressSel.value;
+  const prevPreviewId = previewSel.value;
+  const opts = Object.keys(studentsCache).map(id=>`<option value="${id}">${escapeHtml(studentsCache[id].name)}</option>`).join('');
+  progressSel.innerHTML = opts;
+  previewSel.innerHTML = opts;
+  const progressStillValid = !!studentsCache[prevProgressId];
+  const previewStillValid = !!studentsCache[prevPreviewId];
+  if(progressStillValid) progressSel.value = prevProgressId;
+  if(previewStillValid) previewSel.value = prevPreviewId;
+  syncProgressStudentSearchLabel();
+  // 上面「記住選取」只解決了選單被重置的問題；但即使選單保留住同一位學生，
+  // 只要 students 節點有任何更動(最常見就是編輯進度資料任一欄位時，順便寫入的 lastUpdated 時間戳記)，
+  // 這個函式還是會被觸發一次。如果每次都無條件呼叫 loadProgressForSelected() 重繪整個進度表格，
+  // 等於使用者每打完一格代號，畫面就整個重建一次——如果這次「students」的更新剛好比「progress」本身
+  // 的更新更早回傳(兩個是各自獨立的Firebase寫入，先後順序不保證)，重繪時用到的還是舊資料，
+  // 畫面上剛打好的內容就會被「畫」回空白(即使Firebase裡實際上有存到，畫面看起來還是像不見了)。
+  // 所以這裡改成：只有「原本没選學生」或「原本選的學生現在已經不在清單裡了」才需要重新載入，
+  // 其餘情況(只是同一位學生的其他欄位被更新)交給「progress」自己的監聽器去重繪就好。
+  if(!prevProgressId || !progressStillValid){
+    if(Object.keys(studentsCache).length) loadProgressForSelected();
+  } else {
+    syncStudentLevelWidgets();
+  }
+}
+
+/* ---------------- 進度資料：可搜尋的學生選擇框 ---------------- */
+function syncProgressStudentSearchLabel(){
+  const input = document.getElementById('progressStudentSearch');
+  if(!input || document.activeElement === input) return; // 使用者正在打字搜尋時，不要覆蓋掉輸入內容
+  const sel = document.getElementById('progressStudentSelect');
+  const s = studentsCache[sel.value];
+  input.value = s ? s.name : '';
+}
+function onProgressStudentSearchInput(){
+  const box = document.getElementById('progressStudentDropdown');
+  const keyword = document.getElementById('progressStudentSearch').value.trim().toLowerCase();
+  const ids = Object.keys(studentsCache).filter(id=>{
+    if(!keyword) return true;
+    const s = studentsCache[id];
+    return (s.name||'').toLowerCase().includes(keyword) || (s.nickname||'').toLowerCase().includes(keyword);
+  });
+  if(ids.length === 0){
+    box.innerHTML = `<div class="combo-empty">找不到符合的學生</div>`;
+  } else {
+    box.innerHTML = ids.map(id=>{
+      const s = studentsCache[id];
+      const nickPart = (s.nickname && s.nickname !== s.name) ? `（${escapeHtml(s.nickname)}）` : '';
+      return `<div class="combo-item" onclick="pickProgressStudent('${id}')">${escapeHtml(s.name)}${nickPart}</div>`;
+    }).join('');
+  }
+  box.style.display = 'block';
+}
+function pickProgressStudent(id){
+  document.getElementById('progressStudentSelect').value = id;
+  document.getElementById('progressStudentDropdown').style.display = 'none';
+  syncProgressStudentSearchLabel();
+  loadProgressForSelected();
+}
+document.addEventListener('click', function(e){
+  const search = document.getElementById('progressStudentSearch');
+  const box = document.getElementById('progressStudentDropdown');
+  if(!search || !box) return;
+  if(e.target !== search && !box.contains(e.target)){
+    box.style.display = 'none';
+  }
+});
+
+/* ---------------- 進度資料 ---------------- */
+function loadProgressForSelected(){
+  renderPeriods();
+  renderParentMsgPicker();
+  renderRewardFields();
+  syncStudentLevelWidgets();
+  // 「預覽/輸出PDF」分頁的學生選單，跟著「進度資料」目前選取的學生走，
+  // 使用者不用切過去之後再選一次同一位學生。
+  const sid = currentStudentId();
+  const previewSel = document.getElementById('previewStudentSelect');
+  if(sid && previewSel && studentsCache[sid]) previewSel.value = sid;
+}
+function syncStudentLevelWidgets(){
+  const sid = currentStudentId();
+  const s = studentsCache[sid];
+  document.getElementById('setupDoneCheckbox').checked = !!(s && s.setupDone);
+  const selectedSubjects = (s && s.subjects) || {};
+  ['數學','國語','英文'].forEach(subj=>{
+    document.getElementById('subjCheck_' + subj).checked = !!selectedSubjects[subj];
+  });
+  document.getElementById('lastUpdatedLine').textContent = (s && s.lastUpdated)
+    ? `上次儲存時間：${formatTimestamp(s.lastUpdated)}（請核對下方資料是否正確）`
+    : '尚無儲存紀錄';
+}
+function updateSetupDone(checked){
+  if(!requireDb()) return;
+  const sid = currentStudentId();
+  if(!sid) return;
+  // 勾「已設定完成」時，順便把匯入留下的「待確認」標記清掉
+  const data = {setupDone: checked};
+  if(checked) data.reviewPending = null;
+  db.ref(DB_ROOT + "/students/" + sid).update(data);
+}
+function updateSubjectSelection(subjectName, checked){
+  if(!requireDb()) return;
+  const sid = currentStudentId();
+  if(!sid) return;
+  db.ref(`${DB_ROOT}/students/${sid}/subjects`).update({[subjectName]: checked});
+  touchLastUpdated(sid);
+
+  const periods = progressCache[sid] || {};
+  const updates = {};
+  Object.keys(periods).forEach(pid=>{
+    const subjects = periods[pid].subjects || {};
+    const rowIdsForSubject = Object.keys(subjects).filter(sjid => subjects[sjid].subject === subjectName);
+    if(checked){
+      if(rowIdsForSubject.length === 0){
+        const newId = db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects`).push().key;
+        updates[`${DB_ROOT}/progress/${sid}/${pid}/subjects/${newId}`] = {
+          subject: subjectName, code:"", name:"", desc:"", order: nextOrder(subjects)
+        };
+      }
+    } else {
+      rowIdsForSubject.forEach(sjid=>{
+        updates[`${DB_ROOT}/progress/${sid}/${pid}/subjects/${sjid}`] = null;
+      });
+    }
+  });
+  if(Object.keys(updates).length){
+    firebase.database().ref().update(updates);
+  }
+}
+function currentStudentId(){
+  return document.getElementById('progressStudentSelect').value;
+}
+function touchLastUpdated(sid){
+  if(!db || !sid) return;
+  db.ref(DB_ROOT + "/students/" + sid).update({lastUpdated: Date.now()});
+}
+const FIXED_PERIODS = [
+  {label:"2026年9月", current:true},
+  {label:"2026年12月", current:false},
+  {label:"2027年4月", current:false},
+  {label:"2027年8月", current:false},
+];
+function ensureFixedPeriods(sid){
+  if(!requireDb()) return;
+  const updates = {};
+  FIXED_PERIODS.forEach((fp, i)=>{
+    updates[`${DB_ROOT}/progress/${sid}/fixed${i}`] = {period: fp.label, isCurrent: fp.current, order: i, subjects: {}};
+  });
+  firebase.database().ref().update(updates);
+}
+function updatePeriodLabel(sid, pid, value){
+  if(!requireDb()) return;
+  db.ref(`${DB_ROOT}/progress/${sid}/${pid}`).update({period: value});
+  touchLastUpdated(sid);
+}
+function updatePeriodCurrent(sid, pid, checked){
+  if(!requireDb()) return;
+  db.ref(`${DB_ROOT}/progress/${sid}/${pid}`).update({isCurrent: checked});
+  touchLastUpdated(sid);
+}
+/* ---------------- 進度資料：科目 × 期別 表格(每格一個教材代號) ---------------- */
+const GRID_SUBJECTS = ['數學','國語','英文'];
+function cellEntryFor(periods, pid, subjectName){
+  const subjects = (periods[pid]||{}).subjects || {};
+  const ids = Object.keys(subjects)
+    .filter(id=>subjects[id].subject===subjectName)
+    .sort((a,b)=>(subjects[a].order||0)-(subjects[b].order||0));
+  return ids.length ? {id: ids[0], data: subjects[ids[0]]} : null;
+}
+function renderPeriods(){
+  const sid = currentStudentId();
+  const container = document.getElementById('periodsContainer');
+  if(!sid){ container.innerHTML = ''; return; }
+  const periods = progressCache[sid] || {};
+  const periodIds = Object.keys(periods).sort((a,b)=>(periods[a].order||0)-(periods[b].order||0));
+  if(periodIds.length === 0){
+    container.innerHTML = '<p style="color:var(--ink-soft);font-size:13px;">正在建立固定的四個期別…</p>';
+    ensureFixedPeriods(sid);
+    return;
+  }
+  const student = studentsCache[sid] || {};
+  const selected = student.subjects || {};
+  const subjNames = GRID_SUBJECTS.filter(name=>selected[name]);
+  if(subjNames.length === 0){
+    container.innerHTML = '<p style="color:var(--ink-soft);font-size:13px;padding:10px 0;">請先在上方勾選這位學生學習的科目，下面才會出現輸入表格</p>';
+    return;
+  }
+  const headCells = periodIds.map(pid=>{
+    const p = periods[pid];
+    return `<th>
+      <input type="text" value="${escapeAttr(p.period||'')}" style="width:100px;text-align:center;font-weight:700;"
+        onchange="updatePeriodLabel('${sid}','${pid}', this.value)">
+      <label style="display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;font-weight:400;margin-top:4px;">
+        <input type="checkbox" ${p.isCurrent?'checked':''} onchange="updatePeriodCurrent('${sid}','${pid}', this.checked)"> 目前
+      </label>
+    </th>`;
+  }).join('');
+  const bodyRows = subjNames.map(subj=>{
+    const cells = periodIds.map(pid=>{
+      const entry = cellEntryFor(periods, pid, subj);
+      const code = entry ? (entry.data.code||'') : '';
+      let preview = '';
+      let warn = false;
+      if(code){
+        if(entry.data.name){ preview = escapeHtml(entry.data.name); }
+        else { preview = '查無此代號'; warn = true; }
+      }
+      return `<td>
+        <input type="text" list="${codeListIdFor(subj)}" value="${escapeAttr(code)}"
+          onchange="updateGridCode('${sid}','${pid}','${subj}',this.value)" placeholder="代號">
+        <div class="grid-preview${warn?' warn':''}">${preview}</div>
+      </td>`;
+    }).join('');
+    return `<tr><th class="grid-subj">${escapeHtml(subj)}</th>${cells}</tr>`;
+  }).join('');
+  container.innerHTML = `<div class="card">
+    <table class="progress-grid">
+      <thead><tr><th class="grid-corner">科目 ＼ 期別</th>${headCells}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  </div>` + buildCodeDatalists();   // 每次重繪都重建代號選單，才吃得到新增/刪除的代號
+}
+function codeListIdFor(subject){
+  if(subject === '數學') return 'codeList_math';
+  if(subject === '國語') return 'codeList_chinese';
+  if(subject === '英文') return 'codeList_english';
+  return 'codeList_all';
+}
+function nextOrder(obj){
+  const vals = Object.values(obj||{}).map(v=>v.order||0);
+  return vals.length ? Math.max(...vals)+1 : 0;
+}
+// 表格內單一儲存格(某科目×某期別)的代號變更：清空代號＝刪除這格；
+// 有代號時依 MATERIAL_LOOKUP 查表帶出名稱/說明一併存入(表格上只顯示簡短預覽，不開放另外編輯名稱/說明)
+function updateGridCode(sid, pid, subjectName, rawValue){
+  if(!requireDb()) return;
+  const code = rawValue.trim().toUpperCase();
+  const periods = progressCache[sid] || {};
+  const subjects = (periods[pid]||{}).subjects || {};
+  const existing = cellEntryFor(periods, pid, subjectName);
+
+  if(!code){
+    if(existing){
+      db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects/${existing.id}`).remove();
+      touchLastUpdated(sid);
+    }
+    return;
+  }
+
+  const found = lookupMaterial(subjectName, code);
+  const data = {
+    subject: subjectName,
+    code,
+    name: found ? found.name : '',
+    desc: found ? found.desc : '',
+  };
+  if(existing){
+    db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects/${existing.id}`).update(data);
+  } else {
+    const newId = db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects`).push().key;
+    data.order = nextOrder(subjects);
+    db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects/${newId}`).set(data);
+  }
+  touchLastUpdated(sid);
+}
+
+/* ---------------- 給家長的話：編號選擇（進度資料分頁） ---------------- */
+function renderParentMsgPicker(){
+  const sid = currentStudentId();
+  const input = document.getElementById('parentMsgNoInput');
+  if(!sid){ input.value=''; return; }
+  const no = (progressMetaCache[sid]||{}).parentMsgNo || '';
+  input.value = no;
+}
+function updateParentMsgNo(value){
+  if(!requireDb()) return;
+  const sid = currentStudentId();
+  if(!sid) return;
+  const no = parseInt(value, 10);
+  if(value && (isNaN(no) || no < 1)){
+    alert("請輸入正確的編號(正整數)");
+    renderParentMsgPicker();
+    return;
+  }
+  db.ref(`${DB_ROOT}/progressMeta/${sid}`).update({parentMsgNo: value ? no : null});
+  touchLastUpdated(sid);
+}
+
+/* ---------------- 目標達成獎勵(開頭文字+期別共用；達成與否用勾選，依學生調整) ---------------- */
+function renderRewardFields(){
+  const sid = currentStudentId();
+  const reward = (sid && (progressMetaCache[sid]||{}).reward) || {};
+  ['數學','國語','英文'].forEach(subj=>{
+    document.getElementById('rewardCheck_' + subj).checked = !!reward[subj];
+  });
+  document.getElementById('rewardPreview').textContent = sid ? ('預覽：' + buildRewardText(sid)) : '';
+}
+function updateRewardAchieved(subject, checked){
+  if(!requireDb()) return;
+  const sid = currentStudentId();
+  if(!sid) return;
+  db.ref(`${DB_ROOT}/progressMeta/${sid}/reward`).update({ [subject]: checked || null });
+  touchLastUpdated(sid);
+  renderRewardFields();
+}
+// 组出「開頭文字(固定共用) + 期別 已達成科目 ＋總點數」的完整獎勵文字；
+// 開頭文字跟每科點數、期別在「共用文字設定」共用，哪些科目達成目標則依學生調整(勾選)。
+function buildRewardText(studentId){
+  const points = (settingsCache.rewardPoints != null ? settingsCache.rewardPoints : 50);
+  const intro = `預測進度達成目標者，每一科可得點數${points}點。`;
+  const reward = (progressMetaCache[studentId]||{}).reward || {};
+  const achieved = ['數學','國語','英文'].filter(subj => reward[subj]);
+  if(achieved.length === 0) return intro;
+  const total = points * achieved.length;
+  const dateLabel = settingsCache.rewardDate || '';
+  // 總點數後面的單位文字(預設「點」)由共用設定決定，留空就只印數字
+  const unit = (settingsCache.rewardUnit != null ? settingsCache.rewardUnit : '點');
+  return `${intro}\n${dateLabel} ${achieved.join('、')} ＋${total}${unit}`;
+}
+
+/* ---------------- 共用文字設定 ---------------- */
+function renderParentMsgSettings(){
+  const list = document.getElementById('parentMsgList');
+  const msgs = settingsCache.parentMessages || {};
+  const nos = Object.keys(msgs).map(Number).sort((a,b)=>a-b);
+  let html = '';
+  nos.forEach(i=>{
+    html += `<div style="margin-bottom:10px;display:flex;gap:8px;align-items:flex-start;">
+      <label class="field" style="flex:1;">第 ${i} 則
+        <textarea style="min-height:56px;" onchange="updateParentMsg(${i},this.value)">${escapeHtml(msgs[i]||'')}</textarea>
+      </label>
+      <button class="btn btn-secondary" onclick="deleteParentMsg(${i})" style="flex:0 0 auto;margin-top:20px;">刪除</button>
+    </div>`;
+  });
+  list.innerHTML = html;
+}
+function addParentMsg(){
+  settingsCache.parentMessages = settingsCache.parentMessages || {};
+  const nos = Object.keys(settingsCache.parentMessages).map(Number);
+  const nextNo = nos.length ? Math.max(...nos) + 1 : 1;
+  settingsCache.parentMessages[nextNo] = '';
+  renderParentMsgSettings();
+}
+function deleteParentMsg(no){
+  if(!confirm(`確定要刪除第 ${no} 則嗎？如果有學生目前選用這一則，報告上那段文字會變成空白，需要再幫那些學生重新選一則。`)) return;
+  if(settingsCache.parentMessages) delete settingsCache.parentMessages[no];
+  renderParentMsgSettings();
+}
+function updateParentMsg(no, value){
+  settingsCache.parentMessages = settingsCache.parentMessages || {};
+  settingsCache.parentMessages[no] = value;
+}
+function saveSettings(){
+  if(!requireDb()) return;
+  const data = {
+    greeting: document.getElementById('settingGreeting').value,
+    rewardTitle: document.getElementById('settingRewardTitle').value,
+    rewardPoints: parseInt(document.getElementById('settingRewardPoints').value, 10) || 0,
+    rewardDate: document.getElementById('settingRewardDate').value,
+    rewardUnit: document.getElementById('settingRewardUnit').value,
+    parentTitle: document.getElementById('settingParentTitle').value,
+    parentMessages: settingsCache.parentMessages || {},
+    sign: document.getElementById('settingSign').value,
+  };
+  db.ref(DB_ROOT + "/settings/global").set(data);
+  alert("已儲存");
+}
+
+/* ---------------- 報告渲染 ---------------- */
+const SUBJ_CLASS = {"數學":"math","國語":"chinese","英文":"english"};
+function subjClass(s){ return SUBJ_CLASS[s] || ''; }
+const SUBJ_ORDER = {"數學":0,"國語":1,"英文":2};
+function subjSortKey(subj){ return SUBJ_ORDER.hasOwnProperty(subj) ? SUBJ_ORDER[subj] : 99; }
+
+function renderReportHtml(studentId){
+  const s = studentsCache[studentId];
+  if(!s) return '';
+  const periods = progressCache[studentId] || {};
+  const periodIds = Object.keys(periods).sort((a,b)=>(periods[a].order||0)-(periods[b].order||0));
+
+  function buildSubjectRows(pid){
+    const p = periods[pid];
+    const subjects = p.subjects || {};
+    const subjIds = Object.keys(subjects).sort((a,b)=>{ const d = subjSortKey(subjects[a].subject)-subjSortKey(subjects[b].subject); return d!==0 ? d : (subjects[a].order||0)-(subjects[b].order||0); });
+    return subjIds.map(sjid=>{
+      const sj = subjects[sjid];
+      return `<div class="p-row">
+        <div class="p-row-head">
+          <span class="p-subject ${subjClass(sj.subject)}">${escapeHtml(sj.subject||'')}</span>
+          <span class="p-code">${escapeHtml(sj.code||'')}</span>
+          <span class="p-sep">—</span>
+          <span class="p-name">${escapeHtml(sj.name||'')}</span>
+        </div>
+        <div class="p-desc">${escapeHtml(sj.desc||'')}</div>
+      </div>`;
+    }).join('');
+  }
+  function buildBlock(pid){
+    const p = periods[pid];
+    const tagHtml = p.isCurrent ? '<span class="tag">目前</span>' : '';
+    return `<div class="period-block">
+      <div class="period-date"><span class="d">${escapeHtml(p.period||'')}</span>${tagHtml}</div>
+      ${buildSubjectRows(pid)}
+    </div>`;
+  }
+  // A3橫式專用:單一水平時間軸，用flexbox實作(不是CSS Grid)。
+  // 2026-09-14改版:不再交錯排在線的上下兩側(那樣框寬是節點間距的兩倍，看起來跟日期錯開、
+  // 分不清哪個框是哪一期)。改成「一個期別一欄、跟節點等寬對齊」，框的中心＝節點的中心。
+  // 2026-09-14再改:時間軸列(日期+圓點+主線)移到最上方，教材範圍的框排在線的下方，
+  // 連接線固定從框正中央往上接到自己的圓點。
+  function buildHorizontalTimeline(periodIds){
+    // 每個期別一個等寬欄位，全部排在時間軸下方，欄位順序＝上方節點順序，
+    // 框的中心線就是節點的中心線(連接線固定畫在框正中央 --stem-left:50%)。
+    const slots = periodIds.map(pid=>{
+      return `<div class="h-slot"><div class="h-box h-below" style="--stem-left:50%;">${buildSubjectRows(pid)}</div></div>`;
+    }).join('');
+    const boxRow = `<div class="h-row below">${slots}</div>`;
+
+    const nodeRow = `<div class="h-node-row">${periodIds.map(pid=>{
+      const p = periods[pid];
+      const tagHtml = p.isCurrent ? '<span class="tag">目前</span>' : '';
+      return `<div class="h-node"><span class="h-node-chip"><span class="h-dot"></span><span class="h-date"><span class="d">${escapeHtml(p.period||'')}</span>${tagHtml}</span></span></div>`;
+    }).join('')}</div>`;
+
+    // 2026-09-14:節點列(日期+圓點+主線)移到最上面，教材範圍的框排在線的下方，
+    // 讀者先看到時間軸再往下看內容。
+    return `<div class="h-timeline">
+      ${nodeRow}
+      ${boxRow}
+    </div>`;
+  }
+
+  const msgNo = (progressMetaCache[studentId]||{}).parentMsgNo;
+  const parentBody = (settingsCache.parentMessages && settingsCache.parentMessages[msgNo]) || '';
+  const nick = s.nickname || s.name;
+  const greetingLine = (settingsCache.greeting||'').replace(/\{nick\}/g, nick);
+
+  // 目標達成獎勵:開頭文字+期別是共用設定，哪些科目達成目標依學生勾選，組成邏輯統一由 buildRewardText() 處理
+  // (跟「進度資料」分頁的預覽用同一個函式，確保畫面預覽跟正式報告輸出的文字一致)。
+  const rewardText = buildRewardText(studentId);
+
+  function buildInnerHtml(timelineHtml){
+    return `<h1 class="title">學習報告</h1>
+    <div class="greeting">
+      <p class="salutation">${escapeHtml(s.name)} 的家長您好：</p>
+      <p class="indent">${escapeHtml(greetingLine)}</p>
+    </div>
+    ${timelineHtml}
+    <div class="bottom-row">
+      <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
+      <div class="bottom-block">
+        <div class="parent-note">
+          <div class="parent-note-title">${escapeHtml(settingsCache.parentTitle||'')}</div>
+          <div class="parent-note-body">${escapeHtml(parentBody)}</div>
+        </div>
+        <div class="parent-note-sign">${escapeHtml(settingsCache.sign||'')}</div>
+      </div>
+    </div>`;
+  }
+
+  // 2026-09-15:這個版本固定輸出A3橫式水平時間軸，不再組A4單欄版本、也不再量測要用哪一種。
+  const innerHtml = buildInnerHtml(buildHorizontalTimeline(periodIds));
+  const pageClass = ' a3';
+
+  return `<div class="report-page${pageClass}"><div class="report${pageClass}${bwMode ? ' bw-mode' : ''}">${innerHtml}
+  </div></div>`;
+}
+
+/* 內容量太多時，把 .report 整體等比縮小，塞進 .report-page 固定的一頁高度(297mm)裡，
+   確保「最多3科×4期」這種資料量最滿的情況也只會印出一頁，且順序不會跑掉 */
+// 校準過的固定基準縮放比例：以「3科都學、4個期別都填滿、說明文字正常長度」這種資料量最多的
+// 情況為準(實測這種情況縮小到約0.72倍剛好塞進一頁)，不管實際科目多寡都統一套用同一個比例，
+// 確保不同學生的報告字體大小、版面比例完全一致——不會有「科目少的學生字體看起來比較大」的落差。
+const REPORT_BASE_SCALE = 1.0;
+function fitReportToPage(reportEl){
+  const pagePx = 297 * 96 / 25.4; // A4/A3高度都是297mm，換算成CSS px（約1122.5px）
+  const pageWidthMM = reportEl.classList.contains('a3') ? 420 : 210; // A3橫式寬度是420mm，A4直式是210mm
+  const dbg = document.getElementById('scaleDebugInfo');
+
+  let scale = REPORT_BASE_SCALE;
+  reportEl.style.width = (pageWidthMM / scale) + 'mm';
+  reportEl.style.transform = `scale(${scale})`;
+  let visiblePx = reportEl.getBoundingClientRect().height; // transform會反映在這裡量到的高度上
+
+  if(visiblePx <= pagePx + 0.5){
+    if(dbg) dbg.textContent = `(除錯)縮放比例：${scale.toFixed(3)}（固定基準縮放，內容放得下；高度${visiblePx.toFixed(0)}px／頁高${pagePx.toFixed(0)}px）`;
+    return;
+  }
+
+  // 極少數情況：自訂的教材說明文字特別長，固定基準縮放後還是塞不進一頁，才需要在基準之下再縮小一點。
+  // 用同樣「先加寬、量高度、再校正」的兩階段方式收斂，讓文字依加寬後的版面重新排版，盡量用滿版面寬度。
+  scale = scale * (pagePx / visiblePx);
+  reportEl.style.width = (pageWidthMM / scale) + 'mm';
+  reportEl.style.transform = `scale(${scale})`;
+  visiblePx = reportEl.getBoundingClientRect().height;
+
+  scale = Math.min(REPORT_BASE_SCALE, scale * (pagePx / visiblePx));
+  reportEl.style.width = (pageWidthMM / scale) + 'mm';
+  reportEl.style.transform = `scale(${scale})`;
+  if(dbg) dbg.textContent = `(除錯)縮放比例：${scale.toFixed(3)}（內容超過基準縮放，再進一步縮小）`;
+}
+function onBwModeChange(){
+  bwMode = document.getElementById('bwModeCheckbox').checked;
+  // 如果目前畫面上已經有預覽的報告，切換後立刻用新的配色重新整理，不用再按一次「預覽這位學生」
+  if(document.getElementById('printArea').innerHTML.trim()){
+    previewOne();
+  }
+}
+function previewOne(){
+  const sid = document.getElementById('previewStudentSelect').value;
+  document.getElementById('printArea').innerHTML = renderReportHtml(sid);
+  document.querySelectorAll('#printArea .report').forEach(fitReportToPage);
+}
+function printOne(){
+  previewOne();
+  setPrintPageSize(true);
+  setTimeout(()=>window.print(), 200);
+}
+/* 2026-09-15:統一輸出A3橫式，不用再依紙張尺寸分批，一次把全部學生印出來就好。 */
+function printAll(){
+  const ids = Object.keys(studentsCache);
+  if(ids.length === 0){ alert('目前沒有任何學生資料。'); return; }
+  document.getElementById('printArea').innerHTML = ids.map(id=>renderReportHtml(id)).join('');
+  document.querySelectorAll('#printArea .report').forEach(fitReportToPage);
+  setPrintPageSize(true);
+  setTimeout(()=>window.print(), 300);
+}
+
+/* ---------------- 全班學習總表(Excel) ----------------
+   一位學生一列：姓名 + 4期別×3科的教材代號 + 目標達成獎勵 + 給家長的話。
+   資料全部從既有的 studentsCache / progressCache / progressMetaCache 讀，不另外查資料庫。
+   用 SheetJS 在瀏覽器端直接產生 .xlsx 下載(社群版不支援儲存格樣式，所以只設欄寬與合併標題)。 */
+function exportClassSummaryXlsx(){
+  if(typeof XLSX === 'undefined'){
+    alert('Excel 函式庫(SheetJS)沒有載入成功，請確認網路連線後重新整理頁面。');
+    return;
+  }
+  const ids = Object.keys(studentsCache)
+    .sort((a,b)=>String(studentsCache[a].name||'').localeCompare(String(studentsCache[b].name||''), 'zh-Hant'));
+  if(ids.length === 0){ alert('目前沒有任何學生資料。'); return; }
+
+  // 期別欄位用「順序」對齊(fixed0~fixed3)，標題取第一個有填的學生的期別文字；
+  // 各學生若自己改過期別名稱，總表仍以同一組欄位呈現，不會因為某個人改字就多開一欄。
+  const periodLabels = FIXED_PERIODS.map((fp, i)=>{
+    for(const sid of ids){
+      const periods = progressCache[sid] || {};
+      const pid = Object.keys(periods).find(k=>(periods[k].order||0) === i);
+      const label = pid ? (periods[pid].period||'').trim() : '';
+      if(label) return label;
+    }
+    return fp.label;
+  });
+
+  const points = (settingsCache.rewardPoints != null ? settingsCache.rewardPoints : 50);
+
+  // 第1列:姓名/暱稱 + 每個期別橫跨3科 + 後面4個附加欄位；第2列:各期別底下的科目名稱
+  // (暱稱一起匯出，是為了「匯入總表」時能原樣帶回來、新學生也能直接建好暱稱)
+  const head1 = ['姓名', '暱稱'];
+  const head2 = ['', ''];
+  periodLabels.forEach(label=>{
+    head1.push(label, '', '');
+    GRID_SUBJECTS.forEach(s=>head2.push(s));
+  });
+  ['達成科目', '總點數', '給家長的話(第幾則)', '給家長的話(全文)'].forEach(h=>{ head1.push(h); head2.push(''); });
+
+  const rows = ids.map(sid=>{
+    const s = studentsCache[sid] || {};
+    const periods = progressCache[sid] || {};
+    const meta = progressMetaCache[sid] || {};
+    const selected = s.subjects || {};
+    const row = [s.name || '', s.nickname || ''];
+    FIXED_PERIODS.forEach((fp, i)=>{
+      const pid = Object.keys(periods).find(k=>(periods[k].order||0) === i);
+      GRID_SUBJECTS.forEach(subj=>{
+        // 沒勾選這一科、或這一格沒填代號，就留空白
+        if(!selected[subj] || !pid){ row.push(''); return; }
+        const entry = cellEntryFor(periods, pid, subj);
+        row.push(entry ? (entry.data.code || '') : '');
+      });
+    });
+    const reward = meta.reward || {};
+    const achieved = GRID_SUBJECTS.filter(subj=>reward[subj]);
+    row.push(achieved.join('、'));
+    // 總點數直接寫「數字」不加單位，Excel才能排序/加總(單位是報告上的呈現，總表用不到)
+    row.push(achieved.length ? (points * achieved.length) : '');
+    const msgNo = meta.parentMsgNo || '';
+    row.push(msgNo === '' ? '' : Number(msgNo));
+    row.push((settingsCache.parentMessages && settingsCache.parentMessages[msgNo]) || '');
+    return row;
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet([head1, head2].concat(rows));
+  // 合併:姓名/暱稱(各直向跨2列)、每個期別(橫向跨3欄)、後面4個附加欄位(直向跨2列)
+  const FIRST = 2; // 進度欄位從第3欄(索引2)開始，前面是姓名、暱稱
+  const merges = [{s:{r:0,c:0}, e:{r:1,c:0}}, {s:{r:0,c:1}, e:{r:1,c:1}}];
+  periodLabels.forEach((_, i)=>{ const c = FIRST + i*3; merges.push({s:{r:0,c}, e:{r:0,c:c+2}}); });
+  for(let k=0; k<4; k++){ const c = FIRST + periodLabels.length*3 + k; merges.push({s:{r:0,c}, e:{r:1,c}}); }
+  ws['!merges'] = merges;
+  ws['!cols'] = [{wch:12},{wch:10}]
+    .concat(new Array(periodLabels.length*3).fill({wch:9}))
+    .concat([{wch:14},{wch:9},{wch:16},{wch:60}]);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '學習總表');
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const filename = `KUMON學習總表_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}.xlsx`;
+
+  // 「達成科目」「給家長的話(第幾則)」做成下拉選單:有學習這一科不等於會達成目標，
+  // 所以達成科目要能一個一個挑。Excel原生下拉沒有真正的複選，這裡改用
+  // 「把所有組合列成選項」(數學／數學、國語／數學、國語、英文…)，點一次就選好，
+  // 也還是可以自己打字(showErrorMessage=0，不擋自訂內容)。
+  const firstRow = 3, lastRow = 2 + rows.length;
+  const achievedCol = XLSX.utils.encode_col(FIRST + periodLabels.length*3);
+  const msgCol = XLSX.utils.encode_col(FIRST + periodLabels.length*3 + 2);
+  const dvs = [
+    {sqref:`${achievedCol}${firstRow}:${achievedCol}${lastRow}`, items: subjectCombinations()},
+    {sqref:`${msgCol}${firstRow}:${msgCol}${lastRow}`,
+     items: ['無'].concat(Object.keys(settingsCache.parentMessages||{}).map(Number).sort((a,b)=>a-b).map(String))},
+  ];
+  writeXlsxWithDropdowns(wb, filename, dvs);
+}
+
+// 達成科目的所有組合(含「無」)：1科、2科、3科…依科目數自動展開
+function subjectCombinations(){
+  const out = ['無'];
+  const n = GRID_SUBJECTS.length;
+  for(let mask=1; mask < (1<<n); mask++){
+    const picked = GRID_SUBJECTS.filter((_, i)=>mask & (1<<i));
+    out.push(picked.join('、'));
+  }
+  // 依科目數排序，讓「單科」的選項排在前面比較好找
+  return out.sort((a,b)=>{
+    if(a === '無') return -1;
+    if(b === '無') return 1;
+    return a.split('、').length - b.split('、').length;
+  });
+}
+
+/* SheetJS社群版不支援寫入資料驗證(下拉選單)，所以先產生xlsx，再把它當成zip打開，
+   在工作表XML裡插入<dataValidations>。位置必須放在<mergeCells>之後(OOXML的元素順序有規定，
+   放錯位置Excel會判定檔案毀損)。JSZip沒載入成功時就退回沒有下拉選單的一般檔案。 */
+function writeXlsxWithDropdowns(wb, filename, dvs){
+  if(typeof JSZip === 'undefined'){ XLSX.writeFile(wb, filename); return; }
+  const arr = XLSX.write(wb, {type:'array', bookType:'xlsx'});
+  JSZip.loadAsync(arr)
+    .then(zip => zip.file('xl/worksheets/sheet1.xml').async('string').then(xml=>{
+      const body = dvs.filter(dv=>dv.items && dv.items.length).map(dv=>
+        `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="0" sqref="${dv.sqref}">`
+        + `<formula1>"${dv.items.join(',')}"</formula1></dataValidation>`).join('');
+      if(body){
+        const block = `<dataValidations count="${dvs.length}">${body}</dataValidations>`;
+        if(xml.indexOf('</mergeCells>') !== -1) xml = xml.replace('</mergeCells>', '</mergeCells>' + block);
+        else if(xml.indexOf('</sheetData>') !== -1) xml = xml.replace('</sheetData>', '</sheetData>' + block);
+        zip.file('xl/worksheets/sheet1.xml', xml);
+      }
+      return zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    }))
+    .then(blob=>{
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    })
+    .catch(err=>{
+      console.warn('加入下拉選單失敗，改用一般格式輸出', err);
+      XLSX.writeFile(wb, filename);
+    });
+}
+
+/* ---------------- 匯入全班學習總表(Excel) ----------------
+   把「輸出全班學習總表」產生的檔案(可在Excel改過內容)讀回來，一次寫回所有學生的進度。
+   用途:每年新的一輪，直接在Excel上把四個期別的教材代號整批改好，再匯進來，
+   不用一位學生一位學生在網頁上慢慢key。
+   解析方式刻意不寫死欄位位置——第2列出現「數學/國語/英文」的欄就是進度欄，
+   往左找第1列最近一個有字的儲存格當期別名稱，所以就算中間插了欄位也還讀得懂。 */
+function parseSummarySheet(aoa){
+  const head1 = aoa[0] || [], head2 = aoa[1] || [];
+  if(String(head1[0]||'').trim() !== '姓名'){
+    throw new Error('這個檔案的第一格不是「姓名」，看起來不是本系統輸出的全班學習總表。');
+  }
+  const nickCol = head1.findIndex(h=>String(h||'').trim() === '暱稱');
+  // 進度欄位:第2列是科目名稱的欄，依第1列的期別名稱分組
+  const blocks = [];      // [{label, cols:{科目:欄號}}]
+  let currentLabel = null;
+  const width = Math.max(head1.length, head2.length);
+  for(let c=1; c<width; c++){
+    const subj = String(head2[c]||'').trim();
+    if(GRID_SUBJECTS.indexOf(subj) === -1) continue;
+    const label = String(head1[c]||'').trim();
+    if(label || currentLabel === null){ currentLabel = label; blocks.push({label: currentLabel, cols:{}}); }
+    blocks[blocks.length-1].cols[subj] = c;
+  }
+  if(blocks.length === 0) throw new Error('找不到任何「數學/國語/英文」的進度欄位，請確認用的是本系統輸出的總表。');
+  const findCol = title => head1.findIndex(h=>String(h||'').trim() === title);
+  const achievedCol = findCol('達成科目');
+  const msgNoCol = findCol('給家長的話(第幾則)');
+
+  const rows = [];
+  for(let r=2; r<aoa.length; r++){
+    const line = aoa[r] || [];
+    const name = String(line[0]||'').trim();
+    if(!name) continue;
+    rows.push({
+      name,
+      nickname: nickCol >= 0 ? String(line[nickCol]||'').trim() : '',
+      codes: blocks.map(b=>{
+        const one = {};
+        GRID_SUBJECTS.forEach(subj=>{
+          const c = b.cols[subj];
+          one[subj] = c === undefined ? null : String(line[c]==null?'':line[c]).trim().toUpperCase();
+        });
+        return one;
+      }),
+      achievedRaw: achievedCol >= 0 ? String(line[achievedCol]||'').trim() : '',
+      achievedClear: achievedCol >= 0 && /^(無|none|-|－|x|X)$/.test(String(line[achievedCol]||'').trim()),
+      achieved: achievedCol >= 0
+        ? String(line[achievedCol]||'').split(/[、,，\/\s]+/).filter(x=>GRID_SUBJECTS.indexOf(x) !== -1)
+        : null,
+      msgNo: msgNoCol >= 0 ? String(line[msgNoCol]||'').trim() : null,
+    });
+  }
+  return {blocks, rows};
+}
+
+function importSummaryFile(input){
+  const file = input.files && input.files[0];
+  input.value = '';   // 清掉，才能連續匯入同一個檔名
+  if(!file) return;
+  if(!requireDb()) return;
+  if(typeof XLSX === 'undefined'){
+    alert('Excel 函式庫(SheetJS)沒有載入成功，請確認網路連線後重新整理頁面。');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    let parsed;
+    try{
+      const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      parsed = parseSummarySheet(XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:''}));
+    }catch(err){
+      alert('讀取失敗：' + err.message);
+      return;
+    }
+    previewAndApplyImport(parsed);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function previewAndApplyImport(parsed){
+  // 先比對一輪，算出會影響什麼，讓使用者確認之後才真的寫進資料庫
+  const nameToIds = {};
+  Object.keys(studentsCache).forEach(id=>{
+    const n = String(studentsCache[id].name||'').trim();
+    (nameToIds[n] = nameToIds[n] || []).push(id);
+  });
+  const unknownNames = [], dupNames = [], badCodes = [];
+  let cellCount = 0, matched = 0;
+  parsed.rows.forEach(row=>{
+    const ids = nameToIds[row.name] || [];
+    if(ids.length === 0){ unknownNames.push(row.name); }
+    else if(ids.length > 1){ dupNames.push(row.name); }
+    else { matched++; }
+    row.codes.forEach(one=>{
+      GRID_SUBJECTS.forEach(subj=>{
+        const code = one[subj];
+        if(!code) return;
+        cellCount++;
+        if(!lookupMaterial(subj, code)) badCodes.push(`${row.name} ${subj} ${code}`);
+      });
+    });
+  });
+
+  let msg = `總表裡有 ${parsed.rows.length} 位學生，其中 ${matched} 位比對到現有名單。\n`;
+  msg += `會寫入 ${cellCount} 個教材代號。\n`;
+  msg += `期別名稱會依總表標題統一更新為：${parsed.blocks.map(b=>b.label||'(空白)').join('、')}\n`;
+  if(dupNames.length) msg += `\n⚠ 名單中有同名學生，這幾筆會略過：${dupNames.slice(0,10).join('、')}${dupNames.length>10?' …':''}\n`;
+  if(badCodes.length) msg += `\n⚠ 有 ${badCodes.length} 個代號在教材對照表查不到，還是會寫進去，但報告上會顯示「查無此代號」：\n${badCodes.slice(0,8).join('\n')}${badCodes.length>8?'\n…':''}\n`;
+  let createMissing = false;
+  if(unknownNames.length){
+    createMissing = confirm(`總表裡有 ${unknownNames.length} 位不在現有名單的學生：\n${unknownNames.slice(0,10).join('、')}${unknownNames.length>10?' …':''}\n\n要一併新增這幾位學生嗎？\n（按「取消」則只更新現有學生，這幾筆略過）`);
+  }
+  msg += `空白的格子代表「不動原本的資料」：達成科目、給家長的話留空就保持原狀，要取消請填「無」。\n`;
+  msg += `\n確定要寫入嗎？有填內容的格子會覆蓋現有進度。`;
+  if(!confirm(msg)) return;
+
+  applySummaryImport(parsed, nameToIds, createMissing);
+}
+
+function applySummaryImport(parsed, nameToIds, createMissing){
+  const updates = {};
+  const now = Date.now();
+  let students = 0, cells = 0, removed = 0, changedStudents = 0;
+
+  parsed.rows.forEach(row=>{
+    const ids = nameToIds[row.name] || [];
+    if(ids.length > 1) return;                 // 同名無法判斷是哪一位，略過
+    let sid = ids[0];
+    let isNew = false;
+    if(!sid){
+      if(!createMissing) return;
+      sid = db.ref(DB_ROOT + "/students").push().key;
+      isNew = true;
+    }
+    students++;
+    const before = Object.keys(updates).length;   // 用來判斷這位學生到底有沒有被改到
+    const periods = isNew ? {} : (progressCache[sid] || {});
+    const usedSubjects = {};
+
+    parsed.blocks.forEach((block, i)=>{
+      const pid = Object.keys(periods).find(k=>(periods[k].order||0) === i) || `fixed${i}`;
+      const exists = !!periods[pid];
+      const entries = {};   // 這個期別要寫入的科目資料
+      GRID_SUBJECTS.forEach((subj, si)=>{
+        const code = row.codes[i][subj];
+        if(code === null) return;              // 總表裡沒有這一欄，維持原狀
+        const existing = exists ? cellEntryFor(periods, pid, subj) : null;
+        if(!code){
+          if(existing){ updates[`${DB_ROOT}/progress/${sid}/${pid}/subjects/${existing.id}`] = null; removed++; }
+          return;
+        }
+        const found = lookupMaterial(subj, code);
+        const data = {subject: subj, code, name: found ? found.name : '', desc: found ? found.desc : '',
+                      order: existing ? (existing.data.order || 0) : si};
+        usedSubjects[subj] = true;
+        cells++;
+        if(exists){
+          const key = existing ? existing.id : db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects`).push().key;
+          updates[`${DB_ROOT}/progress/${sid}/${pid}/subjects/${key}`] = data;
+        }else{
+          entries[db.ref(`${DB_ROOT}/progress/${sid}/${pid}/subjects`).push().key] = data;
+        }
+      });
+      if(exists){
+        // 期別名稱統一跟著總表標題走(總表是全班共用的一組期別)
+        if(block.label) updates[`${DB_ROOT}/progress/${sid}/${pid}/period`] = block.label;
+      }else{
+        // 這位學生還沒有這個期別:整個節點一次建好(不能跟下面的子路徑混寫，Firebase不接受重疊路徑)
+        updates[`${DB_ROOT}/progress/${sid}/${pid}`] = {
+          period: block.label || (FIXED_PERIODS[i] ? FIXED_PERIODS[i].label : ''),
+          isCurrent: FIXED_PERIODS[i] ? !!FIXED_PERIODS[i].current : false,
+          order: i, subjects: entries,
+        };
+      }
+    });
+
+    // 達成科目、給家長的話都比照「科目勾選」的作法:格子空白＝沒填＝不動原本的設定，
+    // 不會因為總表沒填就把老師原本勾好的達成科目清掉。
+    // 要整個取消時，在格子裡填「無」。
+    if(row.achieved !== null && row.achievedRaw !== ''){
+      if(row.achievedClear){
+        updates[`${DB_ROOT}/progressMeta/${sid}/reward`] = null;
+      }else if(row.achieved.length){
+        const reward = {};
+        row.achieved.forEach(subj=>{ reward[subj] = true; });
+        updates[`${DB_ROOT}/progressMeta/${sid}/reward`] = reward;
+      }
+    }
+    if(row.msgNo !== null && row.msgNo !== ''){
+      if(row.msgNo === '無'){ updates[`${DB_ROOT}/progressMeta/${sid}/parentMsgNo`] = null; }
+      else if(!isNaN(Number(row.msgNo))){ updates[`${DB_ROOT}/progressMeta/${sid}/parentMsgNo`] = Number(row.msgNo); }
+    }
+
+    // 這位學生有被匯入異動到 → 狀態標成「待確認」，提醒老師回頭核對一次
+    const touched = Object.keys(updates).length > before;
+    if(isNew){
+      updates[`${DB_ROOT}/students/${sid}`] = {
+        name: row.name, nickname: row.nickname || row.name,
+        subjects: usedSubjects, createdAt: now, lastUpdated: now, reviewPending: true,
+      };
+      changedStudents++;
+    }else{
+      // 有填代號的科目自動勾選(沒填的不動，避免誤刪老師手動勾的科目)
+      Object.keys(usedSubjects).forEach(subj=>{ updates[`${DB_ROOT}/students/${sid}/subjects/${subj}`] = true; });
+      if(row.nickname) updates[`${DB_ROOT}/students/${sid}/nickname`] = row.nickname;
+      if(touched){
+        updates[`${DB_ROOT}/students/${sid}/lastUpdated`] = now;
+        updates[`${DB_ROOT}/students/${sid}/reviewPending`] = true;
+        changedStudents++;
+      }
+    }
+  });
+
+  if(Object.keys(updates).length === 0){ alert('沒有任何可以寫入的資料。'); return; }
+
+  // 一次送太多路徑容易逾時，切成每批500筆依序送出
+  writeUpdatesInChunks(updates)
+    .then(()=>{
+      alert(`匯入完成：${students} 位學生、寫入 ${cells} 個教材代號、清除 ${removed} 格。\n其中 ${changedStudents} 位有異動，狀態已標成「待確認」。`);
+    })
+    .catch(err=>{
+      console.error('匯入失敗', err);
+      alert('寫入資料庫失敗：' + err.message);
+    });
+}
+
+/* 多路徑一次送太多容易逾時，切成每批500筆依序送出 */
+function writeUpdatesInChunks(updates){
+  const keys = Object.keys(updates);
+  const chunks = [];
+  for(let i=0; i<keys.length; i+=500){
+    const part = {};
+    keys.slice(i, i+500).forEach(k=>{ part[k] = updates[k]; });
+    chunks.push(part);
+  }
+  return chunks.reduce((p, part)=>p.then(()=>firebase.database().ref().update(part)), Promise.resolve());
+}
+
+/* ---------------- utils ---------------- */
+function formatTimestamp(ts){
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function escapeHtml(str){
+  return String(str||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(str){ return escapeHtml(str); }
+
+/* ---------------- 教材代號對照表分頁 ---------------- */
+// 依科目+代號查詢教材名稱/說明：使用者若在「教材代號對照表」調整過，優先採用調整後的內容，否則用內建對照表
+function lookupMaterial(subject, code){
+  const override = (materialOverridesCache[subject] || {})[code];
+  const base = MATERIAL_LOOKUP[subject] && MATERIAL_LOOKUP[subject][code];
+  if(override && override.deleted) return null;   // 已刪除的代號視同查無此代號
+  if(!override && !base) return null;
+  return {
+    name: (override && override.name !== undefined) ? override.name : (base ? base.name : ''),
+    desc: (override && override.desc !== undefined) ? override.desc : (base ? base.desc : ''),
+  };
+}
+/* ---------------- 教材代號對照表分頁 ----------------
+   資料存在 materialOverrides/{科目}/{代號}：
+   - {name, desc}         內建代號被改過的內容(優先於MATERIAL_LOOKUP)
+   - {name, desc, custom} 老師自己新增、內建對照表沒有的代號
+   - {deleted:true}       內建代號被刪掉(內建表不能真的刪，用標記蓋掉)
+   代號本身要改時＝「用新代號建一筆 + 舊代號刪掉」，兩件事一次寫入。 */
+function materialRowsFor(showDeleted){
+  const rows = [];
+  GRID_SUBJECTS.forEach(subj=>{
+    const base = MATERIAL_LOOKUP[subj] || {};
+    const ov = materialOverridesCache[subj] || {};
+    Object.keys(base).forEach(code=>{
+      const o = ov[code] || {};
+      if(o.deleted && !showDeleted) return;
+      rows.push({subj, code, custom:false, deleted:!!o.deleted,
+                 changed: o.name !== undefined || o.desc !== undefined});
+    });
+    Object.keys(ov).forEach(code=>{
+      if(base[code]) return;              // 已在上面列過
+      if(ov[code].deleted) return;        // 自訂代號刪掉就是真的刪掉，不會有這個狀態
+      rows.push({subj, code, custom:true, deleted:false, changed:true});
+    });
+  });
+  return rows;
+}
+function materialCodeExists(subject, code){
+  const ov = (materialOverridesCache[subject] || {})[code];
+  if(ov && ov.deleted) return false;
+  return !!(ov || (MATERIAL_LOOKUP[subject] && MATERIAL_LOOKUP[subject][code]));
+}
+function addMaterialCode(){
+  if(!requireDb()) return;
+  const subj = document.getElementById('matNewSubj').value;
+  const code = (document.getElementById('matNewCode').value || '').trim().toUpperCase();
+  const name = (document.getElementById('matNewName').value || '').trim();
+  const desc = (document.getElementById('matNewDesc').value || '').trim();
+  if(!code){ alert('請輸入代號'); return; }
+  if(/[.#$/\[\]]/.test(code)){ alert('代號不能包含 . # $ / [ ] 這些符號'); return; }
+  if(materialCodeExists(subj, code)){ alert(`「${subj} ${code}」已經存在了，請直接在表格裡修改。`); return; }
+  db.ref(`${DB_ROOT}/materialOverrides/${subj}/${code}`).set({name, desc, custom:true});
+  document.getElementById('matNewCode').value = '';
+  document.getElementById('matNewName').value = '';
+  document.getElementById('matNewDesc').value = '';
+}
+function renameMaterialCode(subject, oldCode, rawNew){
+  if(!requireDb()) return;
+  const newCode = (rawNew || '').trim().toUpperCase();
+  if(!newCode || newCode === oldCode){ renderMaterialTable(); return; }
+  if(/[.#$/\[\]]/.test(newCode)){ alert('代號不能包含 . # $ / [ ] 這些符號'); renderMaterialTable(); return; }
+  if(materialCodeExists(subject, newCode)){ alert(`「${subject} ${newCode}」已經存在了。`); renderMaterialTable(); return; }
+  const eff = lookupMaterial(subject, oldCode) || {name:'', desc:''};
+  const isBuiltIn = !!(MATERIAL_LOOKUP[subject] && MATERIAL_LOOKUP[subject][oldCode]);
+  if(!confirm(`要把「${subject} ${oldCode}」改成「${newCode}」嗎？\n\n※已經輸入在學生進度裡的舊代號不會跟著改，需要的話請到「進度資料」分頁重新輸入。`)) {
+    renderMaterialTable(); return;
+  }
+  const updates = {};
+  const newIsBuiltIn = !!(MATERIAL_LOOKUP[subject] && MATERIAL_LOOKUP[subject][newCode]);
+  updates[`${DB_ROOT}/materialOverrides/${subject}/${newCode}`] =
+    newIsBuiltIn ? {name: eff.name, desc: eff.desc} : {name: eff.name, desc: eff.desc, custom:true};
+  // 舊的:內建代號只能標記刪除，自訂代號直接移除
+  updates[`${DB_ROOT}/materialOverrides/${subject}/${oldCode}`] = isBuiltIn ? {deleted:true} : null;
+  firebase.database().ref().update(updates);
+}
+function deleteMaterialCode(subject, code, isCustom){
+  if(!requireDb()) return;
+  if(!confirm(`確定要刪除「${subject} ${code}」嗎？${isCustom ? '' : '\n(內建代號會被隱藏，之後可以在「顯示已刪除的代號」裡復原)'}`)) return;
+  if(isCustom) db.ref(`${DB_ROOT}/materialOverrides/${subject}/${code}`).remove();
+  else db.ref(`${DB_ROOT}/materialOverrides/${subject}/${code}`).set({deleted:true});
+}
+function restoreMaterialCode(subject, code){
+  if(!requireDb()) return;
+  db.ref(`${DB_ROOT}/materialOverrides/${subject}/${code}`).remove();
+}
+function updateMaterialOverride(subject, code, field, value){
+  if(!requireDb()) return;
+  db.ref(`${DB_ROOT}/materialOverrides/${subject}/${code}`).update({[field]: value});
+}
+function resetMaterialOverride(subject, code){
+  if(!requireDb()) return;
+  if(!confirm(`確定要把「${subject} ${code}」還原成預設的名稱/說明嗎？`)) return;
+  db.ref(`${DB_ROOT}/materialOverrides/${subject}/${code}`).remove();
+}
+function renderMaterialTable(){
+  const subjFilter = document.getElementById('matSubjFilter').value;
+  const keyword = (document.getElementById('matSearch').value || '').trim().toLowerCase();
+  const showDeleted = document.getElementById('matShowDeleted').checked;
+  const rows = materialRowsFor(showDeleted).filter(r=>{
+    if(subjFilter !== 'all' && r.subj !== subjFilter) return false;
+    if(!keyword) return true;
+    const eff = lookupMaterialRaw(r.subj, r.code);
+    return r.code.toLowerCase().includes(keyword) || (eff.name||'').toLowerCase().includes(keyword);
+  });
+  const body = document.getElementById('materialTableBody');
+  document.getElementById('matCount').textContent = rows.length;
+  if(rows.length === 0){
+    body.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--ink-soft);padding:20px;">找不到符合的教材代號</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(r=>{
+    const eff = lookupMaterialRaw(r.subj, r.code);
+    const tag = r.custom ? '<span style="font-size:11px;color:#2F7A6F;">自訂</span>'
+              : (r.deleted ? '<span style="font-size:11px;color:#c0392b;">已刪除</span>' : '');
+    if(r.deleted){
+      return `<tr style="opacity:.55;">
+        <td><span class="subject-tag ${subjClass(r.subj)}">${escapeHtml(r.subj)}</span><br>${tag}</td>
+        <td>${escapeHtml(r.code)}</td>
+        <td colspan="2" style="color:var(--ink-soft);font-size:12.5px;">這個代號已被刪除，不會出現在代號選單裡</td>
+        <td><button class="btn btn-secondary btn-small" onclick="restoreMaterialCode('${r.subj}','${escapeAttr(r.code)}')">復原</button></td>
+      </tr>`;
+    }
+    return `<tr>
+      <td><span class="subject-tag ${subjClass(r.subj)}">${escapeHtml(r.subj)}</span>${tag ? '<br>'+tag : ''}</td>
+      <td><input type="text" value="${escapeAttr(r.code)}" style="width:100px;"
+            onchange="renameMaterialCode('${r.subj}','${escapeAttr(r.code)}',this.value)"></td>
+      <td><input type="text" value="${escapeAttr(eff.name)}" onchange="updateMaterialOverride('${r.subj}','${escapeAttr(r.code)}','name',this.value)"></td>
+      <td><textarea style="width:100%;min-height:44px;" onchange="updateMaterialOverride('${r.subj}','${escapeAttr(r.code)}','desc',this.value)">${escapeHtml(eff.desc)}</textarea></td>
+      <td>
+        ${(!r.custom && r.changed) ? `<button class="btn btn-secondary btn-small" onclick="resetMaterialOverride('${r.subj}','${escapeAttr(r.code)}')">還原預設</button>` : ''}
+        <button class="btn btn-danger btn-small" style="margin-top:4px;" onclick="deleteMaterialCode('${r.subj}','${escapeAttr(r.code)}',${r.custom})">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+// 表格顯示用:不管有沒有被刪除都要拿得到內容(lookupMaterial對已刪除的會回傳null)
+function lookupMaterialRaw(subject, code){
+  const override = (materialOverridesCache[subject] || {})[code] || {};
+  const base = (MATERIAL_LOOKUP[subject] && MATERIAL_LOOKUP[subject][code]) || {};
+  return {
+    name: override.name !== undefined ? override.name : (base.name || ''),
+    desc: override.desc !== undefined ? override.desc : (base.desc || ''),
+  };
+}
+renderMaterialTable();
+
+renderParentMsgSettings();
+document.getElementById('settingGreeting').value = settingsCache.greeting;
+document.getElementById('settingParentTitle').value = settingsCache.parentTitle;
+document.getElementById('settingRewardTitle').value = settingsCache.rewardTitle;
+document.getElementById('settingRewardPoints').value = settingsCache.rewardPoints;
+document.getElementById('settingRewardDate').value = settingsCache.rewardDate;
+document.getElementById('settingRewardUnit').value = settingsCache.rewardUnit;
+document.getElementById('settingSign').value = settingsCache.sign;
+initFirebase();
+</script>
+
+</body>
+</html>
