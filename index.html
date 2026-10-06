@@ -362,6 +362,7 @@
   <button data-tab="settings">共用文字設定</button>
   <button data-tab="preview">預覽 / 輸出 PDF</button>
   <button data-tab="materials">教材代號對照表</button>
+  <button data-tab="teachers" id="teachersTabBtn" style="display:none;">老師帳號</button>
 </nav>
 
 <main>
@@ -546,6 +547,33 @@
     </div>
   </section>
 
+  <!-- ===================== 老師帳號（只有主管理者看得到） ===================== -->
+  <section id="panel-teachers" class="panel">
+    <div class="card">
+      <h2>新增老師帳號</h2>
+      <p style="font-size:12.5px;color:var(--ink-soft);line-height:1.6;">
+        建立後，這位老師就能登入「學習報告系統」和「圖書借閱」的管理功能。<br>
+        請把 Email 和初始密碼告訴老師；老師之後可以在登入畫面按「忘記密碼？」改成自己的密碼。
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <label class="field" style="flex:1 1 220px;">老師的 Email<input type="email" id="newTeacherEmail" autocomplete="off"></label>
+        <label class="field" style="flex:1 1 160px;">初始密碼（至少 6 碼）<input type="text" id="newTeacherPw" autocomplete="off"></label>
+        <button class="btn btn-primary" id="addTeacherBtn" onclick="addTeacher()" style="flex:0 0 auto;">建立帳號</button>
+      </div>
+      <div id="teacherMsg" style="min-height:20px;font-size:13px;margin-top:10px;"></div>
+    </div>
+    <div class="card">
+      <h2>可以登入的老師</h2>
+      <table>
+        <thead><tr><th>Email</th><th style="width:150px;">加入時間</th><th style="width:96px;">操作</th></tr></thead>
+        <tbody id="teacherTableBody"></tbody>
+      </table>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-top:10px;line-height:1.6;">
+        「移除」後，這位老師登入也看不到任何資料、不能使用圖書管理功能（帳號本身還在，之後要恢復只要再新增一次同一個 Email）。
+      </p>
+    </div>
+  </section>
+
 </main>
 
 <script>
@@ -651,6 +679,7 @@ function initFirebase(){
       document.getElementById('userEmail').textContent = user.email || "";
       document.getElementById('logoutBtn').style.display = "";
       startDataListeners();
+      if(isOwner(user)) startTeacherAdmin();
     }else{
       document.getElementById('loginOverlay').classList.add('show');
       document.getElementById('userEmail').textContent = "";
@@ -658,6 +687,75 @@ function initFirebase(){
       document.getElementById('connStatus').textContent = "尚未登入";
     }
   });
+}
+
+/* ---------------- 老師帳號管理（只有主管理者能用） ----------------
+   老師名單存在資料庫 teachers/{email 轉成的 key}，資料庫規則會檢查登入者在不在名單裡；
+   名單只有主管理者能修改，所以就算有人自己註冊帳號，沒被加進名單也看不到資料。 */
+const OWNER_EMAIL = "happyday1013836@gmail.com";
+function isOwner(user){ return !!user && (user.email || "").toLowerCase() === OWNER_EMAIL; }
+// Firebase 的 key 不能有「.」，跟資料庫規則一樣把「.」換成「,」
+function teacherKey(email){ return email.trim().toLowerCase().replace(/\./g, ","); }
+let teacherAdminStarted = false;
+function startTeacherAdmin(){
+  if(teacherAdminStarted) return;
+  teacherAdminStarted = true;
+  document.getElementById('teachersTabBtn').style.display = "";
+  db.ref("teachers").on("value", snap => renderTeacherTable(snap.val() || {}),
+    err => setTeacherMsg("讀取老師名單失敗：" + err.message, true));
+}
+function renderTeacherTable(list){
+  const rows = Object.keys(list).map(k => list[k]).sort((a,b) => (a.addedAt||0) - (b.addedAt||0));
+  const fmt = t => t ? new Date(t).toLocaleString("zh-TW", {hour12:false}).replace(/:\d\d$/, "") : "";
+  document.getElementById('teacherTableBody').innerHTML =
+    `<tr><td>${escapeHtml(OWNER_EMAIL)}（主管理者）</td><td></td><td></td></tr>` +
+    rows.map(r => `<tr><td>${escapeHtml(r.email)}</td><td>${fmt(r.addedAt)}</td>
+      <td><button class="btn btn-danger btn-small" onclick="removeTeacher('${escapeAttr(r.email)}')">移除</button></td></tr>`).join("");
+}
+function setTeacherMsg(text, isError){
+  const el = document.getElementById('teacherMsg');
+  el.textContent = text;
+  el.style.color = isError ? "#c0392b" : "var(--english)";
+}
+async function addTeacher(){
+  const email = document.getElementById('newTeacherEmail').value.trim().toLowerCase();
+  const pw = document.getElementById('newTeacherPw').value;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ setTeacherMsg("請輸入正確的 Email", true); return; }
+  if(email === OWNER_EMAIL){ setTeacherMsg("這是主管理者帳號，不用另外新增", true); return; }
+  if(pw.length < 6){ setTeacherMsg("初始密碼至少要 6 碼", true); return; }
+  const btn = document.getElementById('addTeacherBtn');
+  btn.disabled = true; setTeacherMsg("建立中…", false);
+  // 用另一個獨立的 Firebase 連線建立帳號：直接用目前的連線建立，會把主管理者登出、換成新老師登入
+  const helper = firebase.apps.find(a => a.name === "teacherCreator") || firebase.initializeApp(FIREBASE_CONFIG, "teacherCreator");
+  let note = "";
+  try{
+    await helper.auth().setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await helper.auth().createUserWithEmailAndPassword(email, pw);
+    await helper.auth().signOut();
+  }catch(err){
+    if(err.code === "auth/email-already-in-use"){
+      note = "（這個 Email 之前就有帳號，密碼沿用原本的；忘記的話請老師在登入畫面按「忘記密碼？」重設）";
+    }else{
+      btn.disabled = false;
+      setTeacherMsg((AUTH_ERROR_TEXT[err.code] || err.code === "auth/weak-password" && "密碼太簡單，請換一個" || ("建立失敗：" + err.message)), true);
+      return;
+    }
+  }
+  try{
+    await db.ref("teachers/" + teacherKey(email)).set({ email, addedAt: Date.now() });
+    document.getElementById('newTeacherEmail').value = "";
+    document.getElementById('newTeacherPw').value = "";
+    setTeacherMsg(`✓ 已建立 ${email}，現在可以登入了` + note, false);
+  }catch(err){
+    setTeacherMsg("帳號已建立，但加入名單失敗：" + err.message, true);
+  }
+  btn.disabled = false;
+}
+function removeTeacher(email){
+  if(!confirm(`確定要移除 ${email} 嗎？\n移除後這位老師就看不到學生資料，也不能使用圖書管理功能。`)) return;
+  db.ref("teachers/" + teacherKey(email)).remove()
+    .then(() => setTeacherMsg(`已移除 ${email}`, false))
+    .catch(err => setTeacherMsg("移除失敗：" + err.message, true));
 }
 
 const AUTH_ERROR_TEXT = {
