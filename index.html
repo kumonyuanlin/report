@@ -712,13 +712,16 @@ function doLogout(){
    3. 有未上傳資料時，重新整理／關閉網頁會跳出確認 */
 let isOnline = false;
 let pendingWrites = 0;
+// 網路順的時候上傳不到一秒就完成，黃條一閃而過反而干擾；上傳超過 2 秒還沒完成才顯示
+const PENDING_BANNER_DELAY = 2000;
+let pendingSince = 0;
 function refreshSyncBanner(){
   const b = document.getElementById('offlineBanner');
   if(!isOnline){
     b.className = "show";
     b.textContent = "⚠ 網路已中斷！" + (pendingWrites ? `有 ${pendingWrites} 筆修改尚未上傳，` : "") +
       "現在輸入的資料還沒存到雲端，請不要重新整理或關閉網頁，等網路恢復後會自動上傳。";
-  }else if(pendingWrites > 0){
+  }else if(pendingWrites > 0 && Date.now() - pendingSince >= PENDING_BANNER_DELAY){
     b.className = "show pending";
     b.textContent = `上傳中…（${pendingWrites} 筆）請稍候再關閉網頁`;
   }else{
@@ -727,6 +730,10 @@ function refreshSyncBanner(){
   }
 }
 function trackWrite(promise){
+  if(pendingWrites === 0){
+    pendingSince = Date.now();
+    setTimeout(refreshSyncBanner, PENDING_BANNER_DELAY + 50);
+  }
   pendingWrites++;
   refreshSyncBanner();
   promise.then(() => {}, err => {
