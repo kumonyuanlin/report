@@ -167,9 +167,10 @@
        兩者基準不同，剩餘空間再各分一半，結果獎勵框永遠比右邊寬約36px，中間分界會偏右、跟上方的框縫對不齊。
        改成直接指定寬度就不受padding影響，左右兩半完全等寬。 */
   .report.a3 .bottom-row .reward-box, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
-  /* 左下角：各科介紹網頁的 QR Code。
-     用絕對定位疊在整頁(.report-page)的左下角，不佔版面、不影響原本內容的位置與縮放 */
-  .report-page > .qr-row{ position:absolute; left:12.5mm; bottom:6mm; z-index:1; }
+  /* 各科介紹網頁的 QR Code：掛在「目標達成獎勵」框正下方。
+     用絕對定位，不佔版面、不影響原本內容的位置與縮放(獎勵框加 position:relative 只是當定位基準，外觀不變) */
+  .report .reward-box{ position:relative; }
+  .report .reward-box > .qr-row{ position:absolute; left:0; top:100%; margin-top:8px; white-space:normal; line-height:1.3; }
   .qr-row{ display:flex; gap:14px; page-break-inside:avoid; }
   .qr-item{ display:flex; flex-direction:column; align-items:center; gap:3px; }
   /* 18mm：手機在一般距離仍可穩定掃描，不建議再小於 15mm */
@@ -1624,7 +1625,7 @@ function renderReportHtml(studentId){
     </div>
     ${timelineHtml}
     <div class="bottom-row">
-      <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
+      <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}${buildSubjectQrRow(studentId)}</div>
       <div class="bottom-block">
         <div class="parent-note">
           <div class="parent-note-title">${escapeHtml(settingsCache.parentTitle||'')}</div>
@@ -1640,7 +1641,7 @@ function renderReportHtml(studentId){
   const pageClass = ' a3';
 
   return `<div class="report-page${pageClass}"><div class="report${pageClass}${bwMode ? ' bw-mode' : ''}">${innerHtml}
-  </div>${buildSubjectQrRow(studentId)}</div>`;
+  </div></div>`;
 }
 
 /* 內容量太多時，把 .report 整體等比縮小，塞進 .report-page 固定的一頁高度(297mm)裡，
