@@ -176,8 +176,8 @@
   /* 18mm：手機在一般距離仍可穩定掃描，不建議再小於 15mm */
   .qr-item svg{ width:18mm; height:18mm; display:block; }
   .qr-item .qr-label{ font-size:12px; font-weight:700; }
-  .qr-item .qr-sub{ font-size:10.5px; color:var(--ink-soft); }
-  .qr-row.bw-mode .qr-item .qr-sub{ color:#000; }
+  .qr-row .qr-sub{ align-self:center; font-size:12px; color:var(--ink-soft); white-space:nowrap; }
+  .qr-row.bw-mode .qr-sub{ color:#000; }
   /* A3橫式:目標達成獎勵、給家長的話兩個框頂端對齊——.parent-note自己還有一層margin-top，
      疊加.bottom-block的margin-top後會比reward-box多下移一截，這裡歸零讓兩個框視覺頂端切齊 */
   .report.a3 .bottom-block .parent-note{ margin-top:0; }
@@ -1545,9 +1545,10 @@ function buildSubjectQrRow(studentId){
   const items = studentSubjects(studentId).map(subj => {
     const svg = qrSvg(SUBJECT_INFO_URLS[subj]);
     if(!svg) return '';
-    return `<div class="qr-item">${svg}<div class="qr-label">KUMON ${subj}</div><div class="qr-sub">掃描了解教材介紹</div></div>`;
+    return `<div class="qr-item">${svg}<div class="qr-label">KUMON ${subj}</div></div>`;
   }).join('');
-  return items ? `<div class="qr-row${bwMode ? ' bw-mode' : ''}">${items}</div>` : '';
+  // 說明文字整排只放一次，放在 QR Code 右邊
+  return items ? `<div class="qr-row${bwMode ? ' bw-mode' : ''}">${items}<div class="qr-sub">掃描了解教材介紹</div></div>` : '';
 }
 
 function renderReportHtml(studentId){
