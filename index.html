@@ -17,6 +17,8 @@
 <!-- JSZip:xlsx其實就是zip。SheetJS社群版寫不出「資料驗證(下拉選單)」，
      所以產生檔案後再用JSZip把下拉選單的XML塞進工作表裡 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- 報告左下角的科目介紹 QR Code（產生 SVG，列印/PDF 都清晰） -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 
 <style>
   :root{
@@ -164,7 +166,15 @@
        「padding+border」的大小(獎勵框有17px左右padding+1px框線，右邊的.bottom-block本身沒有padding)，
        兩者基準不同，剩餘空間再各分一半，結果獎勵框永遠比右邊寬約36px，中間分界會偏右、跟上方的框縫對不齊。
        改成直接指定寬度就不受padding影響，左右兩半完全等寬。 */
-  .report.a3 .bottom-row .reward-box, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
+  .report.a3 .bottom-row .bottom-left, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
+  .report.a3 .bottom-left .reward-box{ margin:0; }
+  /* 左下角：各科介紹網頁的 QR Code */
+  .report .qr-row{ display:flex; gap:18px; margin-top:10px; page-break-inside:avoid; }
+  .report .qr-item{ display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .report .qr-item svg{ width:25mm; height:25mm; display:block; }
+  .report .qr-item .qr-label{ font-size:14px; font-weight:700; }
+  .report .qr-item .qr-sub{ font-size:12px; color:var(--ink-soft); }
+  .report.bw-mode .qr-item .qr-sub{ color:#000; }
   /* A3橫式:目標達成獎勵、給家長的話兩個框頂端對齊——.parent-note自己還有一層margin-top，
      疊加.bottom-block的margin-top後會比reward-box多下移一截，這裡歸零讓兩個框視覺頂端切齊 */
   .report.a3 .bottom-block .parent-note{ margin-top:0; }
@@ -1500,6 +1510,43 @@ function subjClass(s){ return SUBJ_CLASS[s] || ''; }
 const SUBJ_ORDER = {"數學":0,"國語":1,"英文":2};
 function subjSortKey(subj){ return SUBJ_ORDER.hasOwnProperty(subj) ? SUBJ_ORDER[subj] : 99; }
 
+/* 報告左下角：學生有學的科目，各放一個 QR Code 連到 KUMON 官網的科目介紹 */
+const SUBJECT_INFO_URLS = {
+  "數學": "https://www.kumon-km.com.tw/web/suject/suject_math.jsp",
+  "國語": "https://www.kumon-km.com.tw/web/suject/suject_chinese.jsp",
+  "英文": "https://www.kumon-km.com.tw/web/suject/suject_eng.jsp",
+};
+const qrSvgCache = {};
+function qrSvg(url){
+  if(qrSvgCache[url]) return qrSvgCache[url];
+  if(typeof qrcode !== 'function') return '';   // QR 元件沒載入(例如沒網路)就不顯示，不影響報告其他內容
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  return qrSvgCache[url] = qr.createSvgTag({cellSize: 4, margin: 0, scalable: true});
+}
+// 學生學哪些科目：先看「進度資料」勾選的科目；沒勾過就看進度裡出現過的科目；都沒有就三科都放
+function studentSubjects(studentId){
+  const order = ["數學", "國語", "英文"];
+  const picked = (studentsCache[studentId] || {}).subjects || {};
+  let list = order.filter(s => picked[s]);
+  if(!list.length){
+    const seen = new Set();
+    Object.values(progressCache[studentId] || {}).forEach(p =>
+      Object.values(p.subjects || {}).forEach(sj => seen.add(sj.subject)));
+    list = order.filter(s => seen.has(s));
+  }
+  return list.length ? list : order;
+}
+function buildSubjectQrRow(studentId){
+  const items = studentSubjects(studentId).map(subj => {
+    const svg = qrSvg(SUBJECT_INFO_URLS[subj]);
+    if(!svg) return '';
+    return `<div class="qr-item">${svg}<div class="qr-label">KUMON ${subj}</div><div class="qr-sub">掃描了解教材介紹</div></div>`;
+  }).join('');
+  return items ? `<div class="qr-row">${items}</div>` : '';
+}
+
 function renderReportHtml(studentId){
   const s = studentsCache[studentId];
   if(!s) return '';
@@ -1575,7 +1622,10 @@ function renderReportHtml(studentId){
     </div>
     ${timelineHtml}
     <div class="bottom-row">
-      <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
+      <div class="bottom-left">
+        <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
+        ${buildSubjectQrRow(studentId)}
+      </div>
       <div class="bottom-block">
         <div class="parent-note">
           <div class="parent-note-title">${escapeHtml(settingsCache.parentTitle||'')}</div>
