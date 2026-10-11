@@ -166,16 +166,17 @@
        「padding+border」的大小(獎勵框有17px左右padding+1px框線，右邊的.bottom-block本身沒有padding)，
        兩者基準不同，剩餘空間再各分一半，結果獎勵框永遠比右邊寬約36px，中間分界會偏右、跟上方的框縫對不齊。
        改成直接指定寬度就不受padding影響，左右兩半完全等寬。 */
-  .report.a3 .bottom-row .bottom-left, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
-  .report.a3 .bottom-left .reward-box{ margin:0; }
-  /* 左下角：各科介紹網頁的 QR Code */
-  .report .qr-row{ display:flex; gap:14px; margin-top:8px; page-break-inside:avoid; }
-  .report .qr-item{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .report.a3 .bottom-row .reward-box, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
+  /* 左下角：各科介紹網頁的 QR Code。
+     用絕對定位疊在整頁(.report-page)的左下角，不佔版面、不影響原本內容的位置與縮放 */
+  .report-page > .qr-row{ position:absolute; left:12.5mm; bottom:6mm; z-index:1; }
+  .qr-row{ display:flex; gap:14px; page-break-inside:avoid; }
+  .qr-item{ display:flex; flex-direction:column; align-items:center; gap:3px; }
   /* 18mm：手機在一般距離仍可穩定掃描，不建議再小於 15mm */
-  .report .qr-item svg{ width:18mm; height:18mm; display:block; }
-  .report .qr-item .qr-label{ font-size:12px; font-weight:700; }
-  .report .qr-item .qr-sub{ font-size:10.5px; color:var(--ink-soft); }
-  .report.bw-mode .qr-item .qr-sub{ color:#000; }
+  .qr-item svg{ width:18mm; height:18mm; display:block; }
+  .qr-item .qr-label{ font-size:12px; font-weight:700; }
+  .qr-item .qr-sub{ font-size:10.5px; color:var(--ink-soft); }
+  .qr-row.bw-mode .qr-item .qr-sub{ color:#000; }
   /* A3橫式:目標達成獎勵、給家長的話兩個框頂端對齊——.parent-note自己還有一層margin-top，
      疊加.bottom-block的margin-top後會比reward-box多下移一截，這裡歸零讓兩個框視覺頂端切齊 */
   .report.a3 .bottom-block .parent-note{ margin-top:0; }
@@ -1545,7 +1546,7 @@ function buildSubjectQrRow(studentId){
     if(!svg) return '';
     return `<div class="qr-item">${svg}<div class="qr-label">KUMON ${subj}</div><div class="qr-sub">掃描了解教材介紹</div></div>`;
   }).join('');
-  return items ? `<div class="qr-row">${items}</div>` : '';
+  return items ? `<div class="qr-row${bwMode ? ' bw-mode' : ''}">${items}</div>` : '';
 }
 
 function renderReportHtml(studentId){
@@ -1623,10 +1624,7 @@ function renderReportHtml(studentId){
     </div>
     ${timelineHtml}
     <div class="bottom-row">
-      <div class="bottom-left">
-        <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
-        ${buildSubjectQrRow(studentId)}
-      </div>
+      <div class="reward-box"><div class="label">${escapeHtml(settingsCache.rewardTitle||'')}</div>${escapeHtml(rewardText)}</div>
       <div class="bottom-block">
         <div class="parent-note">
           <div class="parent-note-title">${escapeHtml(settingsCache.parentTitle||'')}</div>
@@ -1642,7 +1640,7 @@ function renderReportHtml(studentId){
   const pageClass = ' a3';
 
   return `<div class="report-page${pageClass}"><div class="report${pageClass}${bwMode ? ' bw-mode' : ''}">${innerHtml}
-  </div></div>`;
+  </div>${buildSubjectQrRow(studentId)}</div>`;
 }
 
 /* 內容量太多時，把 .report 整體等比縮小，塞進 .report-page 固定的一頁高度(297mm)裡，
