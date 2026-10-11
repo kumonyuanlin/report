@@ -169,11 +169,12 @@
   .report.a3 .bottom-row .bottom-left, .report.a3 .bottom-row .bottom-block{ flex:0 0 auto; width:calc(50% - 6px); min-width:0; box-sizing:border-box; margin-top:4px; }
   .report.a3 .bottom-left .reward-box{ margin:0; }
   /* 左下角：各科介紹網頁的 QR Code */
-  .report .qr-row{ display:flex; gap:18px; margin-top:10px; page-break-inside:avoid; }
-  .report .qr-item{ display:flex; flex-direction:column; align-items:center; gap:4px; }
-  .report .qr-item svg{ width:25mm; height:25mm; display:block; }
-  .report .qr-item .qr-label{ font-size:14px; font-weight:700; }
-  .report .qr-item .qr-sub{ font-size:12px; color:var(--ink-soft); }
+  .report .qr-row{ display:flex; gap:14px; margin-top:8px; page-break-inside:avoid; }
+  .report .qr-item{ display:flex; flex-direction:column; align-items:center; gap:3px; }
+  /* 18mm：手機在一般距離仍可穩定掃描，不建議再小於 15mm */
+  .report .qr-item svg{ width:18mm; height:18mm; display:block; }
+  .report .qr-item .qr-label{ font-size:12px; font-weight:700; }
+  .report .qr-item .qr-sub{ font-size:10.5px; color:var(--ink-soft); }
   .report.bw-mode .qr-item .qr-sub{ color:#000; }
   /* A3橫式:目標達成獎勵、給家長的話兩個框頂端對齊——.parent-note自己還有一層margin-top，
      疊加.bottom-block的margin-top後會比reward-box多下移一截，這裡歸零讓兩個框視覺頂端切齊 */
